@@ -27,6 +27,12 @@ interface GameInfoPanelProps {
   onChangeDifficulty: (d: Difficulty) => void;
 }
 
+const DIFFICULTY_LABELS: Record<Difficulty, string> = {
+  easy: '简单',
+  medium: '中等',
+  hard: '困难',
+};
+
 export default function GameInfoPanel({
   moveHistory,
   capturedPieces,
@@ -45,13 +51,13 @@ export default function GameInfoPanel({
 }: GameInfoPanelProps) {
   const getStatusText = () => {
     switch (status) {
-      case 'red_wins': return '🏆 Red Wins!';
-      case 'black_wins': return '🏆 Black Wins!';
-      case 'stalemate': return '🤝 Stalemate';
+      case 'red_wins': return '🏆 红方胜！';
+      case 'black_wins': return '🏆 黑方胜！';
+      case 'stalemate': return '🤝 和棋';
       default:
-        if (aiThinking) return '🤔 AI is thinking...';
-        if (isInCheck) return '⚠️ Check!';
-        return currentTurn === 'red' ? '🔴 Your Turn' : '⚫ AI Turn';
+        if (aiThinking) return '🤔 AI 思考中...';
+        if (isInCheck) return '⚠️ 将军！';
+        return currentTurn === 'red' ? '🔴 轮到您走' : '⚫ AI 走棋中';
     }
   };
 
@@ -68,10 +74,10 @@ export default function GameInfoPanel({
 
   const renderCapturedPieces = (pieces: Piece[], label: string) => (
     <div className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+      <span className="text-xs font-medium text-muted-foreground tracking-wider">{label}</span>
       <div className="flex flex-wrap gap-1 min-h-[28px]">
         {pieces.length === 0 ? (
-          <span className="text-xs text-muted-foreground italic">None</span>
+          <span className="text-xs text-muted-foreground italic">暂无</span>
         ) : (
           pieces.map((piece, idx) => (
             <span
@@ -103,13 +109,13 @@ export default function GameInfoPanel({
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <Swords className="w-4 h-4" />
-            Game Controls
+            游戏控制
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Difficulty */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Difficulty</label>
+            <label className="text-xs font-medium text-muted-foreground tracking-wider">难度选择</label>
             <div className="flex gap-2">
               {(['easy', 'medium', 'hard'] as Difficulty[]).map(d => (
                 <Button
@@ -117,9 +123,9 @@ export default function GameInfoPanel({
                   variant={difficulty === d ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => onChangeDifficulty(d)}
-                  className="flex-1 capitalize"
+                  className="flex-1"
                 >
-                  {d}
+                  {DIFFICULTY_LABELS[d]}
                 </Button>
               ))}
             </div>
@@ -129,7 +135,7 @@ export default function GameInfoPanel({
           <div className="flex gap-2">
             <Button onClick={onNewGame} variant="outline" size="sm" className="flex-1">
               <Plus className="w-4 h-4 mr-1" />
-              New Game
+              新局
             </Button>
             <Button
               onClick={onUndo}
@@ -139,7 +145,7 @@ export default function GameInfoPanel({
               disabled={moveHistory.length < 2 || aiThinking}
             >
               <Undo2 className="w-4 h-4 mr-1" />
-              Undo
+              悔棋
             </Button>
           </div>
 
@@ -147,7 +153,7 @@ export default function GameInfoPanel({
           <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
             <div className="flex items-center gap-2">
               <Brain className="w-4 h-4 text-purple-600" />
-              <span className="text-sm font-medium">AI Explanations</span>
+              <span className="text-sm font-medium">AI 解说</span>
             </div>
             <Switch
               checked={aiExplanationEnabled}
@@ -163,14 +169,14 @@ export default function GameInfoPanel({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold flex items-center gap-2 text-purple-800">
               <Brain className="w-4 h-4" />
-              AI Move Explanation
+              AI 走棋解说
             </CardTitle>
           </CardHeader>
           <CardContent>
             {aiExplanationLoading ? (
               <div className="flex items-center gap-2 text-sm text-purple-600">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Analyzing move...
+                正在分析走法...
               </div>
             ) : aiExplanation ? (
               <div className="text-sm text-purple-900 leading-relaxed prose prose-sm prose-purple max-w-none">
@@ -178,7 +184,7 @@ export default function GameInfoPanel({
               </div>
             ) : (
               <p className="text-sm text-purple-600 italic">
-                AI explanation will appear here after the AI makes a move.
+                AI 走棋后将在此显示策略分析
               </p>
             )}
           </CardContent>
@@ -190,13 +196,13 @@ export default function GameInfoPanel({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <Shield className="w-4 h-4" />
-            Captured Pieces
+            被吃棋子
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {renderCapturedPieces(capturedPieces.red, 'Captured by Red (You)')}
+          {renderCapturedPieces(capturedPieces.red, '红方（您）吃掉的')}
           <Separator />
-          {renderCapturedPieces(capturedPieces.black, 'Captured by Black (AI)')}
+          {renderCapturedPieces(capturedPieces.black, '黑方（AI）吃掉的')}
         </CardContent>
       </Card>
 
@@ -205,14 +211,14 @@ export default function GameInfoPanel({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <RotateCcw className="w-4 h-4" />
-            Move History
+            走棋记录
           </CardTitle>
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[200px]">
             {moveHistory.length === 0 ? (
               <p className="text-sm text-muted-foreground italic text-center py-4">
-                No moves yet. Click a red piece to begin.
+                尚无走棋记录，请点击红色棋子开始
               </p>
             ) : (
               <div className="space-y-1">
@@ -234,7 +240,7 @@ export default function GameInfoPanel({
                     </span>
                     {move.captured && (
                       <span className="text-xs text-rose-600">
-                        ×{PIECE_CHARS[move.captured.color][move.captured.type]}
+                        吃{PIECE_CHARS[move.captured.color][move.captured.type]}
                       </span>
                     )}
                   </div>

@@ -185,7 +185,7 @@ export function useGameState() {
       setAiExplanationLoading(false);
     },
     onError: () => {
-      setAiExplanation('Unable to generate explanation at this time.');
+      setAiExplanation('暂时无法生成解说，请稍后再试。');
       setAiExplanationLoading(false);
     },
   });

@@ -27,26 +27,26 @@ export const appRouter = router({
             messages: [
               {
                 role: "system",
-                content: `You are an expert Chinese Chess (Xiangqi) commentator and strategist. When given a move description, provide a concise but insightful explanation of the strategic reasoning behind the move. Consider:
-- Tactical threats (captures, forks, pins, discovered attacks)
-- Positional advantages (controlling key files, outposts, king safety)
-- Strategic plans (piece coordination, pawn advancement, attack/defense balance)
-- Common Xiangqi principles and patterns
+                content: `你是一位资深的中国象棋评论员和战略分析师。当收到一步棋的描述时，请用中文提供简洁而有深度的策略分析。请考虑以下方面：
+- 战术威胁（吃子、捉双、牵制、闪击）
+- 位置优势（控制要道、占据要点、将帅安全）
+- 战略规划（子力协调、兵卒推进、攻防平衡）
+- 常见象棋棋理和布局套路
 
-Keep your explanation to 2-3 sentences, written in an engaging and educational tone. Use standard Xiangqi terminology where appropriate.`,
+请用2-3句话解释，语言生动且具有教育意义。使用标准象棋术语。`,
               },
               {
                 role: "user",
-                content: `Please explain the strategic reasoning behind this Chinese Chess move:\n\n${input.context}`,
+                content: `请分析这步象棋走法的策略意图：\n\n${input.context}`,
               },
             ],
           });
 
-          const explanation = response.choices?.[0]?.message?.content || "Unable to generate explanation.";
+          const explanation = response.choices?.[0]?.message?.content || "无法生成解说。";
           return explanation;
         } catch (error) {
           console.error("LLM explanation error:", error);
-          return "Unable to generate explanation at this time.";
+          return "暂时无法生成解说，请稍后再试。";
         }
       }),
   }),

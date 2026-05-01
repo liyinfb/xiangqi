@@ -631,7 +631,7 @@ export function makeMove(board: Board, from: Position, to: Position): { newBoard
 }
 
 export function posToNotation(pos: Position): string {
-  const colNames = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'];
+  const colNames = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
   return `${colNames[pos.col]}${9 - pos.row}`;
 }
 
@@ -639,6 +639,6 @@ export function moveToNotation(move: Move): string {
   const pieceName = PIECE_CHARS[move.piece.color][move.piece.type];
   const from = posToNotation(move.from);
   const to = posToNotation(move.to);
-  const capture = move.captured ? 'x' : '-';
-  return `${pieceName}${from}${capture}${to}`;
+  const action = move.captured ? '吃' : '→';
+  return `${pieceName}${from}${action}${to}`;
 }

@@ -11,3 +11,4 @@
 - [x] Captured pieces display and move history log
 - [x] Responsive layout with centered board and info/explanation panel
 - [x] Elegant, polished, sophisticated visual design
+- [x] Default Chinese language interface for all UI text

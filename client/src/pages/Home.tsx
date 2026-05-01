@@ -15,9 +15,9 @@ export default function Home() {
               <span className="text-white text-sm font-bold">棋</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-stone-800" style={{ fontFamily: '"Noto Serif SC", serif' }}>
-              Chinese Chess
+              中国象棋
             </h1>
-            <span className="text-sm text-stone-500 font-medium">象棋</span>
+            <span className="text-sm text-stone-500 font-medium">人机对弈</span>
           </div>
         </div>
       </header>
@@ -65,7 +65,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-stone-200 bg-white/60 py-4 mt-8">
         <div className="container text-center text-sm text-stone-500">
-          Play as Red against the AI. Select a piece to see valid moves.
+          您执红棋先行，点击棋子查看可走位置
         </div>
       </footer>
     </div>
