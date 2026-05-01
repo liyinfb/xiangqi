@@ -21,6 +21,8 @@ interface GameInfoPanelProps {
   aiExplanation: string;
   aiExplanationEnabled: boolean;
   aiExplanationLoading: boolean;
+  aiSearchDepth: number | null;
+  aiScore: number | null;
   onNewGame: () => void;
   onUndo: () => void;
   onToggleExplanation: () => void;
@@ -44,6 +46,8 @@ export default function GameInfoPanel({
   aiExplanation,
   aiExplanationEnabled,
   aiExplanationLoading,
+  aiSearchDepth,
+  aiScore,
   onNewGame,
   onUndo,
   onToggleExplanation,
@@ -172,7 +176,21 @@ export default function GameInfoPanel({
               AI 走棋解说
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {/* Search depth info badge */}
+            {aiSearchDepth !== null && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
+                  搜索深度：{aiSearchDepth} 层
+                </Badge>
+                {aiScore !== null && (
+                  <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
+                    评估分数：{aiScore > 0 ? '+' : ''}{aiScore}
+                  </Badge>
+                )}
+              </div>
+            )}
+
             {aiExplanationLoading ? (
               <div className="flex items-center gap-2 text-sm text-purple-600">
                 <Loader2 className="w-4 h-4 animate-spin" />

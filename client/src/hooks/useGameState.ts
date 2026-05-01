@@ -49,6 +49,8 @@ export function useGameState() {
   const [aiExplanation, setAiExplanation] = useState('');
   const [aiExplanationEnabled, setAiExplanationEnabled] = useState(false);
   const [aiExplanationLoading, setAiExplanationLoading] = useState(false);
+  const [aiSearchDepth, setAiSearchDepth] = useState<number | null>(null);
+  const [aiScore, setAiScore] = useState<number | null>(null);
   const [lastMove, setLastMove] = useState<{ from: Position; to: Position } | null>(null);
 
   // Use ref to track board history for undo
@@ -173,9 +175,13 @@ export function useGameState() {
     setCurrentTurn('red');
     setAiThinking(false);
 
+    // Store search metadata for display
+    setAiSearchDepth(aiMove.searchDepth);
+    setAiScore(aiMove.score);
+
     // Get AI explanation if enabled
     if (aiExplanationEnabled) {
-      fetchAIExplanation(currentBoard, aiMove.from, aiMove.to);
+      fetchAIExplanation(currentBoard, aiMove.from, aiMove.to, aiMove.searchDepth, aiMove.score);
     }
   }, [difficulty, aiExplanationEnabled]);
 
@@ -190,11 +196,12 @@ export function useGameState() {
     },
   });
 
-  const fetchAIExplanation = useCallback((boardState: Board, from: Position, to: Position) => {
+  const fetchAIExplanation = useCallback((boardState: Board, from: Position, to: Position, searchDepth: number, score: number) => {
     setAiExplanationLoading(true);
     const context = describeMoveContext(boardState, from, to, 'black');
-    explainMutation.mutate({ context });
-  }, [explainMutation]);
+    const difficultyLabel = difficulty === 'easy' ? '简单' : difficulty === 'medium' ? '中等' : '困难';
+    explainMutation.mutate({ context, searchDepth, score, difficulty: difficultyLabel });
+  }, [explainMutation, difficulty]);
 
   const newGame = useCallback(() => {
     const initialBoard = createInitialBoard();
@@ -208,6 +215,8 @@ export function useGameState() {
     setCheckState(false);
     setAiThinking(false);
     setAiExplanation('');
+    setAiSearchDepth(null);
+    setAiScore(null);
     setLastMove(null);
     boardHistory.current = [initialBoard];
     turnHistory.current = ['red'];
@@ -232,6 +241,8 @@ export function useGameState() {
     setStatus('playing');
     setCheckState(isInCheck(previousBoard, previousTurn));
     setAiExplanation('');
+    setAiSearchDepth(null);
+    setAiScore(null);
     setLastMove(newHistory.length > 0 ? { from: newHistory[newHistory.length - 1].from, to: newHistory[newHistory.length - 1].to } : null);
 
     boardHistory.current = newBoardHistory;
@@ -269,6 +280,8 @@ export function useGameState() {
     aiExplanation,
     aiExplanationEnabled,
     aiExplanationLoading,
+    aiSearchDepth,
+    aiScore,
     lastMove,
     handleCellClick,
     newGame,

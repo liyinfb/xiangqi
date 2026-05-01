@@ -53,6 +53,8 @@ export default function Home() {
               aiExplanation={game.aiExplanation}
               aiExplanationEnabled={game.aiExplanationEnabled}
               aiExplanationLoading={game.aiExplanationLoading}
+              aiSearchDepth={game.aiSearchDepth}
+              aiScore={game.aiScore}
               onNewGame={game.newGame}
               onUndo={game.undoMove}
               onToggleExplanation={game.toggleAiExplanation}

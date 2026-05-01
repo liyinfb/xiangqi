@@ -125,6 +125,7 @@ export interface AIMove {
   from: Position;
   to: Position;
   score: number;
+  searchDepth: number;
 }
 
 export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty): AIMove | null {
@@ -147,7 +148,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
     if (score > bestScore) {
       bestScore = score;
-      bestMove = { from: move.from, to: move.to, score };
+      bestMove = { from: move.from, to: move.to, score, searchDepth: depth };
     }
   }
 
@@ -156,7 +157,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     const scoredMoves: AIMove[] = allMoves.map(move => {
       const { newBoard } = makeMove(board, move.from, move.to);
       const score = minimax(newBoard, 1, -Infinity, Infinity, false, aiColor, nextTurn);
-      return { ...move, score };
+      return { ...move, score, searchDepth: 1 };
     });
     scoredMoves.sort((a, b) => b.score - a.score);
     // Pick from top 5 moves randomly
@@ -186,25 +187,27 @@ export function describeMoveContext(
   const givesCheckmate = isCheckmate(newBoard, opponentColor);
 
   const pieceNames: Record<string, string> = {
-    general: 'General/King',
-    advisor: 'Advisor',
-    elephant: 'Elephant/Bishop',
-    horse: 'Horse/Knight',
-    chariot: 'Chariot/Rook',
-    cannon: 'Cannon',
-    soldier: 'Soldier/Pawn',
+    general: '将/帅',
+    advisor: '士/仕',
+    elephant: '象/相',
+    horse: '马/僌',
+    chariot: '车/俵',
+    cannon: '砲/炮',
+    soldier: '卒/兵',
   };
 
-  let description = `The AI (playing ${aiColor}) moved its ${pieceNames[piece.type]} from position (row ${from.row}, col ${from.col}) to (row ${to.row}, col ${to.col}).`;
+  const colNames = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+  let description = `电脑移动了${pieceNames[piece.type]}，从第${9 - from.row}行${colNames[from.col]}列到第${9 - to.row}行${colNames[to.col]}列。`;
 
   if (captured) {
-    description += ` This move captured the opponent's ${pieceNames[captured.type]}.`;
+    description += ` 这步棋吃掉了对方的${pieceNames[captured.type]}。`;
   }
 
   if (givesCheckmate) {
-    description += ` This move delivers checkmate!`;
+    description += ` 这步棋将杀！`;
   } else if (givesCheck) {
-    description += ` This move puts the opponent's General in check.`;
+    description += ` 这步棋将军！`;
   }
 
   // Count material
@@ -220,7 +223,7 @@ export function describeMoveContext(
     }
   }
 
-  description += ` Current material balance: AI has ${aiMaterial} points, opponent has ${opponentMaterial} points.`;
+  description += ` 当前子力对比：电脑${aiMaterial}分，玩家${opponentMaterial}分。`;
 
   return description;
 }

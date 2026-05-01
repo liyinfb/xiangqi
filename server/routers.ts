@@ -20,24 +20,42 @@ export const appRouter = router({
 
   game: router({
     explainMove: publicProcedure
-      .input(z.object({ context: z.string() }))
+      .input(z.object({
+        context: z.string(),
+        searchDepth: z.number(),
+        score: z.number(),
+        difficulty: z.string(),
+        nodesSearched: z.number().optional(),
+      }))
       .mutation(async ({ input }) => {
         try {
           const response = await invokeLLM({
             messages: [
               {
                 role: "system",
-                content: `你是一位资深的中国象棋评论员和战略分析师。当收到一步棋的描述时，请用中文提供简洁而有深度的策略分析。请考虑以下方面：
+                content: `你是一位资深的中国象棋评论员和战略分析师。你需要解说电脑AI的走棋决策。
+
+解说要求：
+1. 首先简要说明AI搜索的深度和评估情况（用通俗易懂的方式）
+2. 然后解释为什么电脑选择了这步棋，分析其战略意图
+3. 如果有吃子或将军，重点说明这步棋的战术价值
+
+请考虑以下方面：
 - 战术威胁（吃子、捉双、牵制、闪击）
 - 位置优势（控制要道、占据要点、将帅安全）
 - 战略规划（子力协调、兵卒推进、攻防平衡）
 - 常见象棋棋理和布局套路
 
-请用2-3句话解释，语言生动且具有教育意义。使用标准象棋术语。`,
+请用中文回答，3-4句话，语言生动且具有教育意义。使用标准象棋术语。`,
               },
               {
                 role: "user",
-                content: `请分析这步象棋走法的策略意图：\n\n${input.context}`,
+                content: `电脑AI（难度：${input.difficulty}）经过${input.searchDepth}层深度搜索后选择了这步棋，评估分数为${input.score}分。
+
+走法详情：
+${input.context}
+
+请解释电脑为什么选择这步棋，以及搜索深度对决策的影响。`,
               },
             ],
           });

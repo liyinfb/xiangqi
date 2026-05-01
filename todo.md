@@ -12,3 +12,5 @@
 - [x] Responsive layout with centered board and info/explanation panel
 - [x] Elegant, polished, sophisticated visual design
 - [x] Default Chinese language interface for all UI text
+- [x] AI explanation should explain why the computer chose this move
+- [x] AI explanation should include the search depth used by the AI engine
