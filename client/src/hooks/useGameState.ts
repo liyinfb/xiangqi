@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import {
   Board,
@@ -14,7 +14,8 @@ import {
   moveToNotation,
   PIECE_CHARS,
 } from '@/lib/xiangqi';
-import { Difficulty, getBestMove, describeMoveContext } from '@/lib/ai';
+import { Difficulty, describeMoveContext, AIMove } from '@/lib/ai';
+import type { AIWorkerRequest, AIWorkerResponse } from '@/lib/ai.worker';
 
 export type GameStatus = 'playing' | 'red_wins' | 'black_wins' | 'stalemate';
 
@@ -56,6 +57,95 @@ export function useGameState() {
   // Use ref to track board history for undo
   const boardHistory = useRef<Board[]>([createInitialBoard()]);
   const turnHistory = useRef<PieceColor[]>(['red']);
+
+  // Web Worker ref
+  const workerRef = useRef<Worker | null>(null);
+  const pendingBoardRef = useRef<Board | null>(null);
+  const requestIdRef = useRef<number>(0);
+  const aiExplanationEnabledRef = useRef(aiExplanationEnabled);
+  const difficultyRef = useRef(difficulty);
+
+  // Keep refs in sync with state
+  aiExplanationEnabledRef.current = aiExplanationEnabled;
+  difficultyRef.current = difficulty;
+
+  // Initialize Web Worker
+  useEffect(() => {
+    const worker = new Worker(
+      new URL('../lib/ai.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+    workerRef.current = worker;
+
+    worker.onmessage = (e: MessageEvent<AIWorkerResponse & { requestId?: number }>) => {
+      const { move: aiMove, requestId } = e.data as any;
+      const currentBoard = pendingBoardRef.current;
+      if (!currentBoard) return;
+
+      // Ignore stale responses from previous requests
+      if (requestId !== undefined && requestId !== requestIdRef.current) return;
+
+      handleAIResponseFromWorker(currentBoard, aiMove);
+    };
+
+    return () => {
+      worker.terminate();
+    };
+  }, []);
+
+  const handleAIResponseFromWorker = useCallback((currentBoard: Board, aiMove: AIMove | null) => {
+    if (!aiMove) {
+      setStatus('red_wins');
+      setAiThinking(false);
+      return;
+    }
+
+    const piece = currentBoard[aiMove.from.row][aiMove.from.col];
+    if (!piece) {
+      setAiThinking(false);
+      return;
+    }
+
+    const { newBoard, captured } = makeMove(currentBoard, aiMove.from, aiMove.to);
+    const move: Move = { from: aiMove.from, to: aiMove.to, piece, captured: captured || undefined };
+
+    setBoard(newBoard);
+    setLastMove({ from: aiMove.from, to: aiMove.to });
+    setMoveHistory(prev => [...prev, move]);
+
+    if (captured) {
+      setCapturedPieces(prev => ({
+        ...prev,
+        black: [...prev.black, captured],
+      }));
+    }
+
+    // Save to history for undo
+    boardHistory.current.push(newBoard);
+    turnHistory.current.push('red');
+
+    // Check game status
+    if (isCheckmate(newBoard, 'red')) {
+      setStatus('black_wins');
+      setCurrentTurn('red');
+      setCheckState(false);
+      setAiThinking(false);
+      return;
+    }
+
+    setCheckState(isInCheck(newBoard, 'red'));
+    setCurrentTurn('red');
+    setAiThinking(false);
+
+    // Store search metadata for display
+    setAiSearchDepth(aiMove.searchDepth);
+    setAiScore(aiMove.score);
+
+    // Get AI explanation if enabled (use ref to get current value)
+    if (aiExplanationEnabledRef.current) {
+      fetchAIExplanation(currentBoard, aiMove.from, aiMove.to, aiMove.searchDepth, aiMove.score);
+    }
+  }, []);
 
   const handleCellClick = useCallback((row: number, col: number) => {
     if (status !== 'playing' || currentTurn !== 'red' || aiThinking) return;
@@ -118,72 +208,35 @@ export function useGameState() {
     setCheckState(isInCheck(newBoard, 'black'));
     setCurrentTurn('black');
 
-    // Trigger AI move
+    // Trigger AI move via Web Worker
     setTimeout(() => {
       makeAIMove(newBoard);
-    }, 300);
+    }, 200);
   }, [board, difficulty, aiExplanationEnabled]);
 
-  const makeAIMove = useCallback(async (currentBoard: Board) => {
+  const makeAIMove = useCallback((currentBoard: Board) => {
     setAiThinking(true);
+    pendingBoardRef.current = currentBoard;
+    requestIdRef.current++;
+    const currentRequestId = requestIdRef.current;
 
-    // Use setTimeout to allow UI to update
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    const aiMove = getBestMove(currentBoard, 'black', difficulty);
-
-    if (!aiMove) {
-      setStatus('red_wins');
-      setAiThinking(false);
-      return;
+    if (workerRef.current) {
+      const request: AIWorkerRequest & { requestId: number } = {
+        board: currentBoard,
+        aiColor: 'black',
+        difficulty: difficultyRef.current,
+        requestId: currentRequestId,
+      };
+      workerRef.current.postMessage(request);
+    } else {
+      // Fallback: run in main thread if worker not available
+      import('../lib/ai').then(({ getBestMove }) => {
+        if (requestIdRef.current !== currentRequestId) return; // Stale
+        const aiMove = getBestMove(currentBoard, 'black', difficultyRef.current);
+        handleAIResponseFromWorker(currentBoard, aiMove);
+      });
     }
-
-    const piece = currentBoard[aiMove.from.row][aiMove.from.col];
-    if (!piece) {
-      setAiThinking(false);
-      return;
-    }
-
-    const { newBoard, captured } = makeMove(currentBoard, aiMove.from, aiMove.to);
-    const move: Move = { from: aiMove.from, to: aiMove.to, piece, captured: captured || undefined };
-
-    setBoard(newBoard);
-    setLastMove({ from: aiMove.from, to: aiMove.to });
-    setMoveHistory(prev => [...prev, move]);
-
-    if (captured) {
-      setCapturedPieces(prev => ({
-        ...prev,
-        black: [...prev.black, captured],
-      }));
-    }
-
-    // Save to history for undo
-    boardHistory.current.push(newBoard);
-    turnHistory.current.push('red');
-
-    // Check game status
-    if (isCheckmate(newBoard, 'red')) {
-      setStatus('black_wins');
-      setCurrentTurn('red');
-      setCheckState(false);
-      setAiThinking(false);
-      return;
-    }
-
-    setCheckState(isInCheck(newBoard, 'red'));
-    setCurrentTurn('red');
-    setAiThinking(false);
-
-    // Store search metadata for display
-    setAiSearchDepth(aiMove.searchDepth);
-    setAiScore(aiMove.score);
-
-    // Get AI explanation if enabled
-    if (aiExplanationEnabled) {
-      fetchAIExplanation(currentBoard, aiMove.from, aiMove.to, aiMove.searchDepth, aiMove.score);
-    }
-  }, [difficulty, aiExplanationEnabled]);
+  }, [handleAIResponseFromWorker]);
 
   const explainMutation = trpc.game.explainMove.useMutation({
     onSuccess: (data) => {
@@ -204,6 +257,7 @@ export function useGameState() {
   }, [explainMutation, difficulty]);
 
   const newGame = useCallback(() => {
+    requestIdRef.current++; // Invalidate any pending AI response
     const initialBoard = createInitialBoard();
     setBoard(initialBoard);
     setCurrentTurn('red');

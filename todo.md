@@ -19,3 +19,9 @@
 - [x] Implement quiescence search to avoid horizon effect
 - [x] Implement transposition table for caching positions
 - [x] Improve evaluation function with mobility and king safety
+- [x] Implement Zobrist hashing for fast position hashing (replace string hash)
+- [x] Implement Null Move Pruning for faster search
+- [x] Implement Principal Variation Search (PVS) for tighter bounds
+- [x] Move AI computation to Web Worker for non-blocking UI
+- [x] Optimize evaluation function for speed
+- [x] Increase effective search depth for hard mode
