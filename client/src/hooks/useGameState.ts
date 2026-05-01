@@ -1,0 +1,280 @@
+import { useState, useCallback, useRef } from 'react';
+import { trpc } from '@/lib/trpc';
+import {
+  Board,
+  Piece,
+  PieceColor,
+  Position,
+  Move,
+  createInitialBoard,
+  getValidMoves,
+  makeMove,
+  isInCheck,
+  isCheckmate,
+  moveToNotation,
+  PIECE_CHARS,
+} from '@/lib/xiangqi';
+import { Difficulty, getBestMove, describeMoveContext } from '@/lib/ai';
+
+export type GameStatus = 'playing' | 'red_wins' | 'black_wins' | 'stalemate';
+
+export interface GameState {
+  board: Board;
+  currentTurn: PieceColor;
+  selectedPosition: Position | null;
+  validMoves: Position[];
+  moveHistory: Move[];
+  capturedPieces: { red: Piece[]; black: Piece[] };
+  status: GameStatus;
+  isInCheck: boolean;
+  difficulty: Difficulty;
+  aiThinking: boolean;
+  aiExplanation: string;
+  aiExplanationEnabled: boolean;
+  aiExplanationLoading: boolean;
+  lastMove: { from: Position; to: Position } | null;
+}
+
+export function useGameState() {
+  const [board, setBoard] = useState<Board>(createInitialBoard());
+  const [currentTurn, setCurrentTurn] = useState<PieceColor>('red');
+  const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
+  const [validMoves, setValidMoves] = useState<Position[]>([]);
+  const [moveHistory, setMoveHistory] = useState<Move[]>([]);
+  const [capturedPieces, setCapturedPieces] = useState<{ red: Piece[]; black: Piece[] }>({ red: [], black: [] });
+  const [status, setStatus] = useState<GameStatus>('playing');
+  const [checkState, setCheckState] = useState(false);
+  const [difficulty, setDifficulty] = useState<Difficulty>('medium');
+  const [aiThinking, setAiThinking] = useState(false);
+  const [aiExplanation, setAiExplanation] = useState('');
+  const [aiExplanationEnabled, setAiExplanationEnabled] = useState(false);
+  const [aiExplanationLoading, setAiExplanationLoading] = useState(false);
+  const [lastMove, setLastMove] = useState<{ from: Position; to: Position } | null>(null);
+
+  // Use ref to track board history for undo
+  const boardHistory = useRef<Board[]>([createInitialBoard()]);
+  const turnHistory = useRef<PieceColor[]>(['red']);
+
+  const handleCellClick = useCallback((row: number, col: number) => {
+    if (status !== 'playing' || currentTurn !== 'red' || aiThinking) return;
+
+    const clickedPiece = board[row][col];
+
+    // If clicking own piece, select it
+    if (clickedPiece && clickedPiece.color === 'red') {
+      setSelectedPosition({ row, col });
+      const moves = getValidMoves(board, { row, col });
+      setValidMoves(moves);
+      return;
+    }
+
+    // If a piece is selected and clicking a valid move target
+    if (selectedPosition) {
+      const isValid = validMoves.some(m => m.row === row && m.col === col);
+      if (isValid) {
+        executeMove(selectedPosition, { row, col });
+      } else {
+        setSelectedPosition(null);
+        setValidMoves([]);
+      }
+    }
+  }, [board, currentTurn, selectedPosition, validMoves, status, aiThinking]);
+
+  const executeMove = useCallback((from: Position, to: Position) => {
+    const piece = board[from.row][from.col];
+    if (!piece) return;
+
+    const { newBoard, captured } = makeMove(board, from, to);
+
+    const move: Move = { from, to, piece, captured: captured || undefined };
+
+    setBoard(newBoard);
+    setLastMove({ from, to });
+    setMoveHistory(prev => [...prev, move]);
+    setSelectedPosition(null);
+    setValidMoves([]);
+
+    if (captured) {
+      setCapturedPieces(prev => ({
+        ...prev,
+        [piece.color]: [...prev[piece.color], captured],
+      }));
+    }
+
+    // Save to history for undo
+    boardHistory.current.push(newBoard);
+    turnHistory.current.push('black');
+
+    // Check game status
+    if (isCheckmate(newBoard, 'black')) {
+      setStatus('red_wins');
+      setCurrentTurn('black');
+      setCheckState(false);
+      return;
+    }
+
+    setCheckState(isInCheck(newBoard, 'black'));
+    setCurrentTurn('black');
+
+    // Trigger AI move
+    setTimeout(() => {
+      makeAIMove(newBoard);
+    }, 300);
+  }, [board, difficulty, aiExplanationEnabled]);
+
+  const makeAIMove = useCallback(async (currentBoard: Board) => {
+    setAiThinking(true);
+
+    // Use setTimeout to allow UI to update
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const aiMove = getBestMove(currentBoard, 'black', difficulty);
+
+    if (!aiMove) {
+      setStatus('red_wins');
+      setAiThinking(false);
+      return;
+    }
+
+    const piece = currentBoard[aiMove.from.row][aiMove.from.col];
+    if (!piece) {
+      setAiThinking(false);
+      return;
+    }
+
+    const { newBoard, captured } = makeMove(currentBoard, aiMove.from, aiMove.to);
+    const move: Move = { from: aiMove.from, to: aiMove.to, piece, captured: captured || undefined };
+
+    setBoard(newBoard);
+    setLastMove({ from: aiMove.from, to: aiMove.to });
+    setMoveHistory(prev => [...prev, move]);
+
+    if (captured) {
+      setCapturedPieces(prev => ({
+        ...prev,
+        black: [...prev.black, captured],
+      }));
+    }
+
+    // Save to history for undo
+    boardHistory.current.push(newBoard);
+    turnHistory.current.push('red');
+
+    // Check game status
+    if (isCheckmate(newBoard, 'red')) {
+      setStatus('black_wins');
+      setCurrentTurn('red');
+      setCheckState(false);
+      setAiThinking(false);
+      return;
+    }
+
+    setCheckState(isInCheck(newBoard, 'red'));
+    setCurrentTurn('red');
+    setAiThinking(false);
+
+    // Get AI explanation if enabled
+    if (aiExplanationEnabled) {
+      fetchAIExplanation(currentBoard, aiMove.from, aiMove.to);
+    }
+  }, [difficulty, aiExplanationEnabled]);
+
+  const explainMutation = trpc.game.explainMove.useMutation({
+    onSuccess: (data) => {
+      setAiExplanation(data as string);
+      setAiExplanationLoading(false);
+    },
+    onError: () => {
+      setAiExplanation('Unable to generate explanation at this time.');
+      setAiExplanationLoading(false);
+    },
+  });
+
+  const fetchAIExplanation = useCallback((boardState: Board, from: Position, to: Position) => {
+    setAiExplanationLoading(true);
+    const context = describeMoveContext(boardState, from, to, 'black');
+    explainMutation.mutate({ context });
+  }, [explainMutation]);
+
+  const newGame = useCallback(() => {
+    const initialBoard = createInitialBoard();
+    setBoard(initialBoard);
+    setCurrentTurn('red');
+    setSelectedPosition(null);
+    setValidMoves([]);
+    setMoveHistory([]);
+    setCapturedPieces({ red: [], black: [] });
+    setStatus('playing');
+    setCheckState(false);
+    setAiThinking(false);
+    setAiExplanation('');
+    setLastMove(null);
+    boardHistory.current = [initialBoard];
+    turnHistory.current = ['red'];
+  }, []);
+
+  const undoMove = useCallback(() => {
+    if (moveHistory.length < 2 || aiThinking) return; // Undo both player and AI move
+
+    // Remove last two moves (AI + player)
+    const newHistory = moveHistory.slice(0, -2);
+    const newBoardHistory = boardHistory.current.slice(0, -2);
+    const newTurnHistory = turnHistory.current.slice(0, -2);
+
+    const previousBoard = newBoardHistory[newBoardHistory.length - 1];
+    const previousTurn = newTurnHistory[newTurnHistory.length - 1];
+
+    setBoard(previousBoard);
+    setCurrentTurn(previousTurn);
+    setMoveHistory(newHistory);
+    setSelectedPosition(null);
+    setValidMoves([]);
+    setStatus('playing');
+    setCheckState(isInCheck(previousBoard, previousTurn));
+    setAiExplanation('');
+    setLastMove(newHistory.length > 0 ? { from: newHistory[newHistory.length - 1].from, to: newHistory[newHistory.length - 1].to } : null);
+
+    boardHistory.current = newBoardHistory;
+    turnHistory.current = newTurnHistory;
+
+    // Recalculate captured pieces
+    const newCaptured: { red: Piece[]; black: Piece[] } = { red: [], black: [] };
+    for (const move of newHistory) {
+      if (move.captured) {
+        newCaptured[move.piece.color].push(move.captured);
+      }
+    }
+    setCapturedPieces(newCaptured);
+  }, [moveHistory, aiThinking]);
+
+  const toggleAiExplanation = useCallback(() => {
+    setAiExplanationEnabled(prev => !prev);
+  }, []);
+
+  const changeDifficulty = useCallback((d: Difficulty) => {
+    setDifficulty(d);
+  }, []);
+
+  return {
+    board,
+    currentTurn,
+    selectedPosition,
+    validMoves,
+    moveHistory,
+    capturedPieces,
+    status,
+    isInCheck: checkState,
+    difficulty,
+    aiThinking,
+    aiExplanation,
+    aiExplanationEnabled,
+    aiExplanationLoading,
+    lastMove,
+    handleCellClick,
+    newGame,
+    undoMove,
+    toggleAiExplanation,
+    changeDifficulty,
+    setDifficulty: changeDifficulty,
+  };
+}

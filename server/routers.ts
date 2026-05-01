@@ -2,9 +2,10 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import { invokeLLM } from "./_core/llm";
+import { z } from "zod";
 
 export const appRouter = router({
-    // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
@@ -17,12 +18,38 @@ export const appRouter = router({
     }),
   }),
 
-  // TODO: add feature routers here, e.g.
-  // todo: router({
-  //   list: protectedProcedure.query(({ ctx }) =>
-  //     db.getUserTodos(ctx.user.id)
-  //   ),
-  // }),
+  game: router({
+    explainMove: publicProcedure
+      .input(z.object({ context: z.string() }))
+      .mutation(async ({ input }) => {
+        try {
+          const response = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert Chinese Chess (Xiangqi) commentator and strategist. When given a move description, provide a concise but insightful explanation of the strategic reasoning behind the move. Consider:
+- Tactical threats (captures, forks, pins, discovered attacks)
+- Positional advantages (controlling key files, outposts, king safety)
+- Strategic plans (piece coordination, pawn advancement, attack/defense balance)
+- Common Xiangqi principles and patterns
+
+Keep your explanation to 2-3 sentences, written in an engaging and educational tone. Use standard Xiangqi terminology where appropriate.`,
+              },
+              {
+                role: "user",
+                content: `Please explain the strategic reasoning behind this Chinese Chess move:\n\n${input.context}`,
+              },
+            ],
+          });
+
+          const explanation = response.choices?.[0]?.message?.content || "Unable to generate explanation.";
+          return explanation;
+        } catch (error) {
+          console.error("LLM explanation error:", error);
+          return "Unable to generate explanation at this time.";
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
