@@ -30,7 +30,7 @@ const DEPTH_MAP: Record<Difficulty, number> = {
 const TIME_LIMIT: Record<Difficulty, number> = {
   easy: 500,
   medium: 3000,
-  hard: 12000,
+  hard: 5000,
 };
 
 // ==================== Zobrist Hashing ====================

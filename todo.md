@@ -25,3 +25,4 @@
 - [x] Move AI computation to Web Worker for non-blocking UI
 - [x] Optimize evaluation function for speed
 - [x] Increase effective search depth for hard mode
+- [x] Reduce hard mode time limit to 5 seconds
