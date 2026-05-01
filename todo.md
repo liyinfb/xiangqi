@@ -14,3 +14,8 @@
 - [x] Default Chinese language interface for all UI text
 - [x] AI explanation should explain why the computer chose this move
 - [x] AI explanation should include the search depth used by the AI engine
+- [x] Hard mode uses strongest algorithm with deeper search
+- [x] Implement iterative deepening with time control
+- [x] Implement quiescence search to avoid horizon effect
+- [x] Implement transposition table for caching positions
+- [x] Improve evaluation function with mobility and king safety
