@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBestMove, resetMoveCounter, ttClear } from "../client/src/lib/ai";
+import { getBestMove, resetSearchState } from "../client/src/lib/ai";
 import { Board, PieceColor, getAllValidMoves, isInCheck } from "../client/src/lib/xiangqi";
 
 /**
@@ -10,8 +10,7 @@ import { Board, PieceColor, getAllValidMoves, isInCheck } from "../client/src/li
  */
 
 function checkNoBlunder(board: Board, color: PieceColor, description: string): void {
-  ttClear();
-  resetMoveCounter();
+  resetSearchState();
   const move = getBestMove(board, color, 'hard');
   expect(move).not.toBeNull();
   
@@ -173,7 +172,7 @@ describe("AI Tactical Regression Tests", () => {
     board[5][8] = { type: 'chariot', color: 'red' }; // Attacking the horse
     board[8][3] = { type: 'cannon', color: 'red' };
     
-    resetMoveCounter();
+    resetSearchState();
     const move = getBestMove(board, 'black', 'hard');
     expect(move).not.toBeNull();
     

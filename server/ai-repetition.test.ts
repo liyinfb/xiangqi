@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBestMove, resetMoveCounter, computeZobristHash } from "../client/src/lib/ai";
+import { getBestMove, resetMoveCounter, resetSearchState, computeZobristHash } from "../client/src/lib/ai";
 import { createInitialBoard, makeMove, Board, PieceColor } from "../client/src/lib/xiangqi";
 
 describe("AI Repetition Avoidance", () => {
@@ -11,8 +11,8 @@ describe("AI Repetition Avoidance", () => {
     const positions: string[] = [];
     let repetitions = 0;
     
+    resetSearchState();
     for (let i = 0; i < 20; i++) {
-      resetMoveCounter();
       // Use medium difficulty for faster test execution while still testing repetition logic
       const move = getBestMove(board, turn, 'medium', undefined, positionHashes);
       if (!move) break;

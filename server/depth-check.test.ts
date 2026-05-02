@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createInitialBoard } from "../client/src/lib/xiangqi";
-import { getBestMove, resetMoveCounter, ttClear } from "../client/src/lib/ai";
+import { getBestMove, resetSearchState } from "../client/src/lib/ai";
 
 describe("AI Depth Check", () => {
   beforeEach(() => {
-    resetMoveCounter();
-    ttClear();
+    resetSearchState();
   });
 
   it("hard mode reaches depth 8+ from initial position within 9s", () => {

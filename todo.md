@@ -61,3 +61,4 @@
 - [x] Optimize AI search efficiency: +2 depth improvement via Counter Move Heuristic, IID, LMR pre-computed table, LMP, aspiration gradual widening, history malus; fixed critical Q-search shared buffer corruption bug
 - [x] Fix opening book: added AI-as-red first moves, symmetric mirror entries for left/right variations, AI-as-red 2nd/3rd move responses; covers all common openings with addSymmetric helper
 - [x] Bug: opening book timing issue — fixed moveHistoryRef eager update before setTimeout; confirmed working in browser (AI responds instantly from book)
+- [x] Research classic Xiangqi openings and expand opening book to 5-10 moves deep (152 entries covering 10 opening systems with symmetric mirrors, plus resetSearchState for test isolation)

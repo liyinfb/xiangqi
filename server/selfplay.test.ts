@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBestMove, resetMoveCounter, ttClear, Difficulty } from "../client/src/lib/ai";
+import { getBestMove, resetSearchState, Difficulty } from "../client/src/lib/ai";
 import { createInitialBoard, makeMove, isCheckmate, isInCheck, getAllValidMoves, Board, PieceColor } from "../client/src/lib/xiangqi";
 
 interface MoveDetail {
@@ -16,8 +16,7 @@ function playSelfGame(redDifficulty: Difficulty, blackDifficulty: Difficulty, ma
   let currentTurn: PieceColor = 'red';
   const details: MoveDetail[] = [];
 
-  ttClear();
-  resetMoveCounter();
+  resetSearchState();
 
   for (let moveNum = 1; moveNum <= maxMoves; moveNum++) {
     const difficulty = currentTurn === 'red' ? redDifficulty : blackDifficulty;

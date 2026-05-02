@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { getBestMove, resetMoveCounter, computeZobristHash, ttClear } from "../client/src/lib/ai";
+import { getBestMove, resetMoveCounter, computeZobristHash, ttClear, resetSearchState } from "../client/src/lib/ai";
 import { createInitialBoard, makeMove, Board, PieceColor, Piece } from "../client/src/lib/xiangqi";
 
 // Helper to create a board from piece placement
@@ -13,8 +13,7 @@ function createBoard(pieces: { row: number; col: number; type: Piece['type']; co
 
 describe("Comprehensive AI Strength Tests", () => {
   beforeEach(() => {
-    ttClear();
-    resetMoveCounter();
+    resetSearchState();
   });
   
   // Test 1: Don't move a piece into a chariot's attack line

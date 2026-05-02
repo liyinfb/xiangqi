@@ -175,6 +175,20 @@ export function ttClear(): void {
   ttAge = 0;
 }
 
+/** Reset ALL mutable search state — use between independent test positions */
+export function resetSearchState(): void {
+  ttClear();
+  historyScores.fill(0);
+  killerFrom1.fill(-1);
+  killerTo1.fill(-1);
+  killerFrom2.fill(-1);
+  killerTo2.fill(-1);
+  counterMoves.fill(-1);
+  gamePositionHashes = [];
+  searchPathHashes = [];
+  moveCounter = 0;
+}
+
 // ==================== Enhanced Evaluation ====================
 
 const EVAL_PIECE_VALUES: Record<PieceType, number> = {
