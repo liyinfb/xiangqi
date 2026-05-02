@@ -1,7 +1,10 @@
-// AI Engine for Chinese Chess - NegaMax Framework
-// Features: Zobrist Hashing, Transposition Table, Null Move Pruning,
-// Principal Variation Search (PVS), Quiescence Search, Late Move Reduction,
-// Killer Moves, History Heuristic, MVV-LVA, Aspiration Windows, Iterative Deepening
+// AI Engine for Chinese Chess - NegaMax Framework (Optimized)
+// Features: Zobrist Hashing, Transposition Table with Age, Null Move Pruning,
+// Principal Variation Search (PVS), Quiescence Search, Late Move Reduction (LMR),
+// Late Move Pruning (LMP), Internal Iterative Deepening (IID),
+// Killer Moves, Counter Move Heuristic, History Heuristic, MVV-LVA,
+// Aspiration Windows with gradual widening, Iterative Deepening,
+// Futility Pruning, Razoring, Delta Pruning, Check Extensions
 // All search uses IN-PLACE make/undo to avoid board cloning
 // NegaMax: score is always from the perspective of the CURRENT player to move
 
@@ -28,7 +31,7 @@ export type Difficulty = 'easy' | 'medium' | 'hard';
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 3,
   medium: 5,
-  hard: 24,
+  hard: 30,  // Increased max depth (time-limited anyway)
 };
 
 // Futility pruning margins indexed by depth
@@ -37,7 +40,6 @@ const FUTILITY_MARGIN = [0, 200, 350, 500, 650, 800, 950];
 const RAZOR_MARGIN = 600;
 
 // Use finite bounds instead of Infinity to avoid JS arithmetic issues
-// (-Infinity + 1 === -Infinity in JS, which breaks null window searches)
 const INF = 300000;
 
 // Time limits per difficulty (ms)
@@ -54,6 +56,7 @@ export function resetMoveCounter(): void {
   moveCounter = 0;
   ttClear();
   historyScores.fill(0);
+  counterMoves.fill(-1);
 }
 
 // ==================== Zobrist Hashing ====================
@@ -106,55 +109,70 @@ function updateHash(hash: number, fromRow: number, fromCol: number, toRow: numbe
   return hash;
 }
 
-// ==================== Transposition Table ====================
+// ==================== Transposition Table with Age ====================
 
 const TT_EXACT = 0;
-const TT_LOWERBOUND = 1;  // score >= beta (fail high)
-const TT_UPPERBOUND = 2;  // score <= alpha (fail low)
+const TT_LOWERBOUND = 1;
+const TT_UPPERBOUND = 2;
 
-interface TTEntry {
-  hash: number;
-  depth: number;
-  score: number;
-  flag: number;
-  bestFromRow: number;
-  bestFromCol: number;
-  bestToRow: number;
-  bestToCol: number;
-}
-
+// Flat array TT for better cache performance
+// Each entry: [hash, depth, score, flag, fromRow, fromCol, toRow, toCol, age]
+// Using typed arrays for compactness
 const TT_SIZE = 1 << 20; // ~1M entries
 const TT_MASK = TT_SIZE - 1;
-const ttTable: (TTEntry | null)[] = new Array(TT_SIZE).fill(null);
+const TT_FIELDS = 9;
+const ttData = new Int32Array(TT_SIZE * TT_FIELDS);
+const ttOccupied = new Uint8Array(TT_SIZE); // 0 = empty, 1 = occupied
+let ttAge = 0; // Incremented each search iteration
 
 function ttProbe(hash: number, depth: number, alpha: number, beta: number): { score: number; flag: number; bestMove: { fromRow: number; fromCol: number; toRow: number; toCol: number } | null } | null {
-  const entry = ttTable[hash & TT_MASK];
-  if (!entry || entry.hash !== hash) return null;
+  const idx = (hash & TT_MASK) * TT_FIELDS;
+  if (!ttOccupied[hash & TT_MASK] || ttData[idx] !== hash) return null;
 
-  const bestMove = entry.bestFromRow >= 0 ? {
-    fromRow: entry.bestFromRow, fromCol: entry.bestFromCol,
-    toRow: entry.bestToRow, toCol: entry.bestToCol
-  } : null;
+  const entryDepth = ttData[idx + 1];
+  const entryScore = ttData[idx + 2];
+  const entryFlag = ttData[idx + 3];
+  const fr = ttData[idx + 4];
+  const fc = ttData[idx + 5];
+  const tr = ttData[idx + 6];
+  const tc = ttData[idx + 7];
 
-  if (entry.depth >= depth) {
-    if (entry.flag === TT_EXACT) return { score: entry.score, flag: TT_EXACT, bestMove };
-    if (entry.flag === TT_LOWERBOUND && entry.score >= beta) return { score: entry.score, flag: TT_LOWERBOUND, bestMove };
-    if (entry.flag === TT_UPPERBOUND && entry.score <= alpha) return { score: entry.score, flag: TT_UPPERBOUND, bestMove };
+  const bestMove = fr >= 0 ? { fromRow: fr, fromCol: fc, toRow: tr, toCol: tc } : null;
+
+  if (entryDepth >= depth) {
+    if (entryFlag === TT_EXACT) return { score: entryScore, flag: TT_EXACT, bestMove };
+    if (entryFlag === TT_LOWERBOUND && entryScore >= beta) return { score: entryScore, flag: TT_LOWERBOUND, bestMove };
+    if (entryFlag === TT_UPPERBOUND && entryScore <= alpha) return { score: entryScore, flag: TT_UPPERBOUND, bestMove };
   }
 
   return { score: 0, flag: -1, bestMove };
 }
 
 function ttStore(hash: number, depth: number, score: number, flag: number, fromRow: number, fromCol: number, toRow: number, toCol: number): void {
-  const idx = hash & TT_MASK;
-  const existing = ttTable[idx];
-  if (!existing || existing.hash !== hash || existing.depth <= depth) {
-    ttTable[idx] = { hash, depth, score, flag, bestFromRow: fromRow, bestFromCol: fromCol, bestToRow: toRow, bestToCol: toCol };
+  const slot = hash & TT_MASK;
+  const idx = slot * TT_FIELDS;
+
+  // Replace if: empty, same hash, deeper search, or old age
+  if (!ttOccupied[slot] ||
+      ttData[idx] === hash ||
+      ttData[idx + 1] <= depth ||
+      ttData[idx + 8] < ttAge) {
+    ttOccupied[slot] = 1;
+    ttData[idx] = hash;
+    ttData[idx + 1] = depth;
+    ttData[idx + 2] = score;
+    ttData[idx + 3] = flag;
+    ttData[idx + 4] = fromRow;
+    ttData[idx + 5] = fromCol;
+    ttData[idx + 6] = toRow;
+    ttData[idx + 7] = toCol;
+    ttData[idx + 8] = ttAge;
   }
 }
 
 export function ttClear(): void {
-  ttTable.fill(null);
+  ttOccupied.fill(0);
+  ttAge = 0;
 }
 
 // ==================== Enhanced Evaluation ====================
@@ -165,25 +183,34 @@ const EVAL_PIECE_VALUES: Record<PieceType, number> = {
 
 const SOLDIER_CROSSED_VALUE = 220;
 
-// Pre-computed position-piece tables
+// Pre-computed position-piece tables (flat arrays for speed)
 const EVAL_TABLE_RED: Record<PieceType, number[][]> = {} as any;
 const EVAL_TABLE_BLACK: Record<PieceType, number[][]> = {} as any;
 
+// Flat evaluation tables for fastest access
+const EVAL_FLAT_RED = new Int16Array(7 * 90); // 7 piece types * 90 squares
+const EVAL_FLAT_BLACK = new Int16Array(7 * 90);
+
 function initEvalTables() {
   const types: PieceType[] = ['general', 'advisor', 'elephant', 'horse', 'chariot', 'cannon', 'soldier'];
-  for (const type of types) {
+  for (let ti = 0; ti < types.length; ti++) {
+    const type = types[ti];
     EVAL_TABLE_RED[type] = Array(10).fill(null).map((_, row) =>
       Array(9).fill(null).map((_, col) => {
         let base = EVAL_PIECE_VALUES[type];
         if (type === 'soldier' && row <= 4) base = SOLDIER_CROSSED_VALUE;
-        return base + POSITION_BONUS[type][row][col] * 5;
+        const val = base + POSITION_BONUS[type][row][col] * 5;
+        EVAL_FLAT_RED[ti * 90 + row * 9 + col] = val;
+        return val;
       })
     );
     EVAL_TABLE_BLACK[type] = Array(10).fill(null).map((_, row) =>
       Array(9).fill(null).map((_, col) => {
         let base = EVAL_PIECE_VALUES[type];
         if (type === 'soldier' && row >= 5) base = SOLDIER_CROSSED_VALUE;
-        return base + POSITION_BONUS[type][9 - row][col] * 5;
+        const val = base + POSITION_BONUS[type][9 - row][col] * 5;
+        EVAL_FLAT_BLACK[ti * 90 + row * 9 + col] = val;
+        return val;
       })
     );
   }
@@ -197,9 +224,11 @@ function evaluateForSide(board: Board, currentTurn: PieceColor): number {
     for (let col = 0; col <= 8; col++) {
       const piece = board[row][col];
       if (!piece) continue;
+      const ti = PIECE_TYPE_INDEX[piece.type];
+      const sq = row * 9 + col;
       const value = piece.color === 'red'
-        ? EVAL_TABLE_RED[piece.type][row][col]
-        : EVAL_TABLE_BLACK[piece.type][row][col];
+        ? EVAL_FLAT_RED[ti * 90 + sq]
+        : EVAL_FLAT_BLACK[ti * 90 + sq];
       if (piece.color === currentTurn) score += value;
       else score -= value;
     }
@@ -221,8 +250,16 @@ const killerTo1: Int8Array = new Int8Array(MAX_PLY).fill(-1);
 const killerFrom2: Int8Array = new Int8Array(MAX_PLY).fill(-1);
 const killerTo2: Int8Array = new Int8Array(MAX_PLY).fill(-1);
 
+// Counter Move Heuristic: indexed by [from_sq * 90 + to_sq] -> best response move encoded
+// Stores the move that refuted the opponent's previous move
+const counterMoves: Int32Array = new Int32Array(90 * 90).fill(-1);
+
 function posIdx(row: number, col: number): number {
   return row * 9 + col;
+}
+
+function encodeMove(fr: number, fc: number, tr: number, tc: number): number {
+  return (fr << 12) | (fc << 8) | (tr << 4) | tc;
 }
 
 function addKiller(fromRow: number, fromCol: number, toRow: number, toCol: number, ply: number): void {
@@ -245,7 +282,18 @@ function isKiller(fromRow: number, fromCol: number, toRow: number, toCol: number
     (killerFrom2[ply] === fi && killerTo2[ply] === ti);
 }
 
-// Compact move representation for sorting (avoids object creation)
+// Pre-computed LMR reduction table
+const LMR_TABLE = new Uint8Array(64 * 64);
+function initLMR() {
+  for (let d = 1; d < 64; d++) {
+    for (let m = 1; m < 64; m++) {
+      LMR_TABLE[d * 64 + m] = Math.max(1, Math.min(Math.floor(Math.log(d) * Math.log(m) * 0.5), d - 1));
+    }
+  }
+}
+initLMR();
+
+// Compact move representation for sorting
 interface ScoredMove {
   fromRow: number;
   fromCol: number;
@@ -254,14 +302,33 @@ interface ScoredMove {
   score: number;
 }
 
+// Previous move tracking for counter move heuristic
+let prevMoveFrom = -1;
+let prevMoveTo = -1;
+
 function generateScoredMoves(
   board: Board,
   moves: { from: Position; to: Position }[],
   ply: number,
   ttMove: { fromRow: number; fromCol: number; toRow: number; toCol: number } | null
 ): ScoredMove[] {
-  const scored: ScoredMove[] = new Array(moves.length);
-  for (let i = 0; i < moves.length; i++) {
+  const len = moves.length;
+  const scored: ScoredMove[] = new Array(len);
+  
+  // Get counter move for this position
+  let counterFr = -1, counterFc = -1, counterTr = -1, counterTc = -1;
+  if (prevMoveFrom >= 0) {
+    const cmIdx = prevMoveFrom * 90 + prevMoveTo;
+    const cm = counterMoves[cmIdx];
+    if (cm >= 0) {
+      counterFr = (cm >> 12) & 0xF;
+      counterFc = (cm >> 8) & 0xF;
+      counterTr = (cm >> 4) & 0xF;
+      counterTc = cm & 0xF;
+    }
+  }
+
+  for (let i = 0; i < len; i++) {
     const m = moves[i];
     const fr = m.from.row, fc = m.from.col, tr = m.to.row, tc = m.to.col;
     let s = 0;
@@ -273,17 +340,22 @@ function generateScoredMoves(
       const captured = board[tr][tc];
       if (captured) {
         const attacker = board[fr][fc]!;
+        // MVV-LVA: prioritize capturing high-value pieces with low-value attackers
         s = 1000000 + EVAL_PIECE_VALUES[captured.type] * 10 - EVAL_PIECE_VALUES[attacker.type];
       } else if (isKiller(fr, fc, tr, tc, ply)) {
         s = 900000;
+      } else if (fr === counterFr && fc === counterFc && tr === counterTr && tc === counterTc) {
+        // Counter move bonus
+        s = 850000;
       } else {
         s = historyScores[posIdx(fr, fc) * 90 + posIdx(tr, tc)];
       }
     }
     scored[i] = { fromRow: fr, fromCol: fc, toRow: tr, toCol: tc, score: s };
   }
-  // Insertion sort
-  for (let i = 1; i < scored.length; i++) {
+  
+  // Insertion sort (good for nearly-sorted arrays from iterative deepening)
+  for (let i = 1; i < len; i++) {
     const item = scored[i];
     let j = i - 1;
     while (j >= 0 && scored[j].score < item.score) {
@@ -297,7 +369,6 @@ function generateScoredMoves(
 
 // ==================== In-Place Make/Undo ====================
 
-// Make a move in place, return captured piece for undo
 function makeMoveInPlace(board: Board, fromRow: number, fromCol: number, toRow: number, toCol: number): Piece | null {
   const captured = board[toRow][toCol];
   board[toRow][toCol] = board[fromRow][fromCol];
@@ -305,7 +376,6 @@ function makeMoveInPlace(board: Board, fromRow: number, fromCol: number, toRow: 
   return captured;
 }
 
-// Undo a move in place
 function undoMoveInPlace(board: Board, fromRow: number, fromCol: number, toRow: number, toCol: number, piece: Piece, captured: Piece | null): void {
   board[fromRow][fromCol] = piece;
   board[toRow][toCol] = captured;
@@ -323,7 +393,7 @@ let gamePositionHashes: number[] = [];
 let searchPathHashes: number[] = [];
 
 function isRepetition(hash: number): boolean {
-  // Check in game history - need at least 2 occurrences to be a repetition
+  // Check in game history
   let count = 0;
   for (let i = 0; i < gamePositionHashes.length; i++) {
     if (gamePositionHashes[i] === hash) {
@@ -331,8 +401,7 @@ function isRepetition(hash: number): boolean {
       if (count >= 2) return true;
     }
   }
-  // Check in current search path - if position appears in the search path,
-  // it means we're about to create a cycle
+  // Check in current search path
   for (let i = 0; i < searchPathHashes.length - 1; i++) {
     if (searchPathHashes[i] === hash) return true;
   }
@@ -340,7 +409,6 @@ function isRepetition(hash: number): boolean {
 }
 
 // ==================== Quiescence Search (NegaMax) ====================
-// Returns score from the perspective of `currentTurn`
 
 function quiescence(
   board: Board,
@@ -350,6 +418,8 @@ function quiescence(
   hash: number,
   qDepth: number
 ): number {
+  nodesSearched++;
+
   const standPat = evaluateForSide(board, currentTurn);
 
   if (qDepth <= 0) return standPat;
@@ -357,23 +427,32 @@ function quiescence(
   if (standPat >= beta) return beta;
   if (standPat > alpha) alpha = standPat;
 
-  // Generate only captures using fast capture generator
+  // Generate only captures
   const captureMoves = getCaptureMovesFast(board, currentTurn);
 
-  // Sort by victim value (MVV)
+  // Build local capture list with victim values for sorting
+  // MUST be local (not shared global) because quiescence recurses
   const captures: { fr: number; fc: number; tr: number; tc: number; vv: number }[] = [];
-  for (const m of captureMoves) {
+  for (let i = 0; i < captureMoves.length; i++) {
+    const m = captureMoves[i];
     const victim = board[m.to.row][m.to.col];
     if (victim) {
-      captures.push({ fr: m.from.row, fc: m.from.col, tr: m.to.row, tc: m.to.col, vv: EVAL_PIECE_VALUES[victim.type] });
+      captures.push({
+        fr: m.from.row, fc: m.from.col,
+        tr: m.to.row, tc: m.to.col,
+        vv: EVAL_PIECE_VALUES[victim.type]
+      });
     }
   }
+
+  // Sort by victim value descending (MVV)
   captures.sort((a, b) => b.vv - a.vv);
 
   const DELTA = 200;
   const nextTurn = currentTurn === 'red' ? 'black' : 'red';
 
-  for (const cap of captures) {
+  for (let ci = 0; ci < captures.length; ci++) {
+    const cap = captures[ci];
     // Delta pruning
     if (standPat + cap.vv + DELTA < alpha) continue;
 
@@ -381,7 +460,6 @@ function quiescence(
     const captured = makeMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc);
     const newHash = updateHash(hash, cap.fr, cap.fc, cap.tr, cap.tc, piece, captured);
 
-    // NegaMax: negate the score from the opponent's perspective
     const score = -quiescence(board, -beta, -alpha, nextTurn, newHash, qDepth - 1);
 
     undoMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc, piece, captured);
@@ -394,7 +472,9 @@ function quiescence(
 }
 
 // ==================== Principal Variation Search (NegaMax) ====================
-// Returns score from the perspective of `currentTurn`
+
+// Late Move Pruning thresholds by depth
+const LMP_THRESHOLD = [0, 5, 8, 12, 16, 20, 24, 28];
 
 function pvs(
   board: Board,
@@ -408,16 +488,16 @@ function pvs(
 ): number {
   if (searchAborted) return 0;
 
-  // Time check every 2048 nodes
+  // Time check every 4096 nodes (slightly less frequent for speed)
   nodesSearched++;
-  if ((nodesSearched & 2047) === 0) {
+  if ((nodesSearched & 4095) === 0) {
     if (Date.now() - startTime > timeLimit) {
       searchAborted = true;
       return 0;
     }
   }
 
-  // Repetition detection - treat repeated positions as draws
+  // Repetition detection
   if (ply > 0 && isRepetition(hash)) {
     return 0;
   }
@@ -432,6 +512,18 @@ function pvs(
     return quiescence(board, alpha, beta, currentTurn, hash, 6);
   }
 
+  // Mate distance pruning
+  const mateScore = 200000 - ply;
+  if (mateScore < beta) {
+    beta = mateScore;
+    if (alpha >= mateScore) return mateScore;
+  }
+  const matedScore = -200000 + ply;
+  if (matedScore > alpha) {
+    alpha = matedScore;
+    if (beta <= matedScore) return matedScore;
+  }
+
   // TT probe
   const ttResult = ttProbe(hash, depth, alpha, beta);
   if (ttResult && ttResult.flag >= 0) {
@@ -439,8 +531,10 @@ function pvs(
   }
   const ttMove = ttResult?.bestMove || null;
 
+  const isPV = beta - alpha > 1;
+
   // Razoring
-  if (!inCheck && depth <= 3 && ply > 0) {
+  if (!isPV && !inCheck && depth <= 3 && ply > 0) {
     const staticEval = evaluateForSide(board, currentTurn);
     if (staticEval + RAZOR_MARGIN < alpha) {
       const qScore = quiescence(board, alpha, beta, currentTurn, hash, 6);
@@ -448,9 +542,8 @@ function pvs(
     }
   }
 
-  // Null Move Pruning (before move generation to save time on cutoffs)
-  if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0) {
-    // Quick material check - need major pieces to avoid zugzwang
+  // Null Move Pruning
+  if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0 && !isPV) {
     let hasMaterial = false;
     for (let r = 0; r <= 9; r++) {
       for (let c = 0; c <= 8; c++) {
@@ -469,7 +562,6 @@ function pvs(
       const nextTurn = currentTurn === 'red' ? 'black' : 'red';
       const nullHash = hash ^ ZOBRIST_TURN;
 
-      // NegaMax: negate the score
       const nullScore = -pvs(board, depth - 1 - R, -beta, -beta + 1, nextTurn, nullHash, ply + 1, false);
 
       if (searchAborted) return 0;
@@ -477,32 +569,59 @@ function pvs(
     }
   }
 
+  // Internal Iterative Deepening (IID)
+  // When no TT move is available at high depth, do a shallow search first
+  // to get a good move for ordering
+  let iidMove: { fromRow: number; fromCol: number; toRow: number; toCol: number } | null = ttMove;
+  if (!iidMove && depth >= 6 && isPV) {
+    const iidDepth = Math.max(1, depth - 4);
+    pvs(board, iidDepth, alpha, beta, currentTurn, hash, ply, false);
+    if (!searchAborted) {
+      const iidResult = ttProbe(hash, 0, -INF, INF);
+      if (iidResult?.bestMove) {
+        iidMove = iidResult.bestMove;
+      }
+    }
+  }
+
   // Generate moves
   const allMoves = getAllValidMovesFast(board, currentTurn);
   if (allMoves.length === 0) {
-    if (inCheck) return -200000 + ply; // Checkmate (bad for current player)
-    return 0; // Stalemate
+    if (inCheck) return -200000 + ply;
+    return 0;
   }
 
-  // Static eval for futility
+  // Static eval for futility and LMP
   const staticEvalForFutility = (!inCheck && depth <= 6) ? evaluateForSide(board, currentTurn) : 0;
 
   // Sort moves
-  const scoredMoves = generateScoredMoves(board, allMoves, ply, ttMove);
+  const scoredMoves = generateScoredMoves(board, allMoves, ply, iidMove);
 
   const nextTurn = currentTurn === 'red' ? 'black' : 'red';
   let bestScore = -INF;
   let bestFromRow = -1, bestFromCol = -1, bestToRow = -1, bestToCol = -1;
-  let flag = TT_UPPERBOUND; // Assume fail-low until we find a move > alpha
+  let flag = TT_UPPERBOUND;
   let movesSearched = 0;
+
+  // Save previous move for counter move tracking
+  const savedPrevFrom = prevMoveFrom;
+  const savedPrevTo = prevMoveTo;
 
   for (let i = 0; i < scoredMoves.length; i++) {
     const sm = scoredMoves[i];
     const piece = board[sm.fromRow][sm.fromCol]!;
     const captured = board[sm.toRow][sm.toCol];
+    const isCapture = captured !== null;
+    const isTTMove = iidMove && sm.fromRow === iidMove.fromRow && sm.fromCol === iidMove.fromCol && sm.toRow === iidMove.toRow && sm.toCol === iidMove.toCol;
+
+    // Late Move Pruning (LMP): skip quiet late moves at low depths
+    if (!isPV && !inCheck && depth <= 7 && movesSearched > 0 && !isCapture && !isTTMove) {
+      const lmpThresh = LMP_THRESHOLD[depth] || 28;
+      if (movesSearched >= lmpThresh) continue;
+    }
 
     // Futility Pruning
-    if (!inCheck && depth <= 4 && movesSearched > 0 && !captured) {
+    if (!inCheck && depth <= 4 && movesSearched > 0 && !isCapture) {
       const margin = FUTILITY_MARGIN[depth] || 950;
       if (staticEvalForFutility + margin < alpha) continue;
     }
@@ -511,26 +630,48 @@ function pvs(
     makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
     const newHash = updateHash(hash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
-    // Track position in search path for repetition detection
+    // Track position in search path
     searchPathHashes.push(newHash);
+
+    // Update previous move for counter move heuristic
+    prevMoveFrom = posIdx(sm.fromRow, sm.fromCol);
+    prevMoveTo = posIdx(sm.toRow, sm.toCol);
 
     let score: number;
 
     if (movesSearched === 0) {
-      // Full window search for first move
+      // Full window search for first move (PV move)
       score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, ply + 1, true);
     } else {
       // Late Move Reduction
       let reduction = 0;
-      if (depth >= 3 && movesSearched >= 3 && !captured && !inCheck) {
+      if (depth >= 3 && movesSearched >= 2 && !isCapture && !inCheck) {
         const newInCheck = isInCheckFastExport(board, nextTurn);
         if (!newInCheck) {
-          reduction = Math.floor(Math.log(depth) * Math.log(movesSearched) * 0.5);
-          reduction = Math.max(1, Math.min(reduction, depth - 2));
+          // Use pre-computed LMR table
+          const d = Math.min(depth, 63);
+          const m = Math.min(movesSearched, 63);
+          reduction = LMR_TABLE[d * 64 + m];
+          
+          // Reduce less for killer moves and counter moves
+          if (isKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply)) {
+            reduction = Math.max(0, reduction - 1);
+          }
+          // Reduce more for moves with bad history
+          const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
+          if (historyScores[histIdx] < 0) {
+            reduction += 1;
+          }
+          // Reduce less in PV nodes
+          if (isPV) {
+            reduction = Math.max(0, reduction - 1);
+          }
+          reduction = Math.min(reduction, depth - 2);
+          reduction = Math.max(0, reduction);
         }
       }
 
-      // PVS null window search
+      // PVS null window search with reduction
       score = -pvs(board, depth - 1 - reduction, -alpha - 1, -alpha, nextTurn, newHash, ply + 1, true);
 
       // Re-search with full window if null window failed high
@@ -541,6 +682,10 @@ function pvs(
 
     // Remove from search path
     searchPathHashes.pop();
+
+    // Restore previous move
+    prevMoveFrom = savedPrevFrom;
+    prevMoveTo = savedPrevTo;
 
     // Undo move in place
     undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
@@ -561,10 +706,28 @@ function pvs(
     }
 
     if (alpha >= beta) {
-      // Beta cutoff
-      if (!captured) {
+      // Beta cutoff - update move ordering heuristics
+      if (!isCapture) {
         addKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply);
-        historyScores[posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol)] += depth * depth;
+        
+        // History heuristic with bonus/malus
+        const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
+        const bonus = depth * depth;
+        historyScores[histIdx] += bonus;
+        // Penalize all previously searched quiet moves (history malus)
+        for (let prev = 0; prev < i; prev++) {
+          const pm = scoredMoves[prev];
+          if (!board[pm.toRow][pm.toCol]) { // quiet move
+            const pIdx = posIdx(pm.fromRow, pm.fromCol) * 90 + posIdx(pm.toRow, pm.toCol);
+            historyScores[pIdx] -= bonus;
+          }
+        }
+        
+        // Counter move heuristic
+        if (savedPrevFrom >= 0) {
+          const cmIdx = savedPrevFrom * 90 + savedPrevTo;
+          counterMoves[cmIdx] = encodeMove(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
+        }
       }
       flag = TT_LOWERBOUND;
       break;
@@ -603,13 +766,16 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   const allMoves = getAllValidMovesFast(board, aiColor);
   if (allMoves.length === 0) return null;
   if (allMoves.length === 1) {
-    return { from: allMoves[0].from, to: allMoves[0].to, score: 0, searchDepth: 1 };
+    return { from: allMoves[0].from, to: allMoves[0].to, score: 0, searchDepth: 1, nodesSearched: 1 };
   }
 
   // Compute initial hash
   const rootHash = computeZobristHash(board, aiColor);
 
-  // Age history scores
+  // Age TT entries for better replacement
+  ttAge++;
+
+  // Age history scores (decay)
   for (let i = 0; i < historyScores.length; i++) {
     historyScores[i] = historyScores[i] >> 2;
   }
@@ -629,83 +795,34 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
   // Iterative deepening with timing
   let prevDepthTime = 0;
-  let depthStartTime = 0;
   let totalNodesSearched = 0;
   for (let depth = 1; depth <= maxDepth; depth++) {
     searchAborted = false;
     nodesSearched = 0;
     searchPathHashes = [];
-    depthStartTime = Date.now();
+    prevMoveFrom = -1;
+    prevMoveTo = -1;
+    const depthStartTime = Date.now();
 
-    // Aspiration window
+    // Aspiration window with gradual widening
     let alpha = -INF;
     let beta = INF;
+    let aspirationDelta = 35;
     if (depth >= 4 && bestMove) {
-      alpha = bestMove.score - 50;
-      beta = bestMove.score + 50;
+      alpha = bestMove.score - aspirationDelta;
+      beta = bestMove.score + aspirationDelta;
     }
 
-    // Sort root moves using previous iteration's best move
-    const ttBest = bestMove ? { fromRow: bestMove.from.row, fromCol: bestMove.from.col, toRow: bestMove.to.row, toCol: bestMove.to.col } : null;
-    const scoredRootMoves = generateScoredMoves(board, allMoves, 0, ttBest);
+    let aspirationFailed = true;
+    while (aspirationFailed) {
+      aspirationFailed = false;
 
-    let currentBest: AIMove | null = null;
-    let currentBestScore = -INF;
+      // Sort root moves using previous iteration's best move
+      const ttBest = bestMove ? { fromRow: bestMove.from.row, fromCol: bestMove.from.col, toRow: bestMove.to.row, toCol: bestMove.to.col } : null;
+      const scoredRootMoves = generateScoredMoves(board, allMoves, 0, ttBest);
 
-    for (let i = 0; i < scoredRootMoves.length; i++) {
-      const sm = scoredRootMoves[i];
-      const piece = board[sm.fromRow][sm.fromCol]!;
-      const captured = board[sm.toRow][sm.toCol];
-
-      makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
-      const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
-
-      // Track position in search path for repetition detection
-      searchPathHashes.push(newHash);
-
-      let score: number;
-
-      // Penalize moves that directly repeat a position from game history
-      const isDirectRepeat = gamePositionHashes.includes(newHash);
-      if (isDirectRepeat) {
-        score = -15; // Slight penalty to discourage repetition
-      } else if (i === 0) {
-        // NegaMax: negate the score from opponent's perspective
-        score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
-      } else {
-        // PVS null window search
-        score = -pvs(board, depth - 1, -alpha - 1, -alpha, nextTurn, newHash, 1, true);
-        if (!searchAborted && score > alpha && score < beta) {
-          score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
-        }
-      }
-
-      searchPathHashes.pop();
-      undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
-
-      if (searchAborted) break;
-
-      // Track score for randomization
-      const key = `${sm.fromRow},${sm.fromCol},${sm.toRow},${sm.toCol}`;
-      rootMoveScores.set(key, score);
-
-      if (score > currentBestScore) {
-        currentBestScore = score;
-        currentBest = { from: { row: sm.fromRow, col: sm.fromCol }, to: { row: sm.toRow, col: sm.toCol }, score, searchDepth: depth };
-        if (score > alpha) alpha = score;
-      }
-    }
-
-    if (searchAborted) break;
-
-    // Aspiration window failure: re-search with full window
-    if (depth >= 4 && bestMove && currentBest &&
-      (currentBest.score <= bestMove.score - 50 || currentBest.score >= bestMove.score + 50)) {
-      searchAborted = false;
-      nodesSearched = 0;
-      let fullAlpha = -INF;
-      let fullBest: AIMove | null = null;
-      let fullBestScore = -INF;
+      let currentBest: AIMove | null = null;
+      let currentBestScore = -INF;
 
       for (let i = 0; i < scoredRootMoves.length; i++) {
         const sm = scoredRootMoves[i];
@@ -716,21 +833,28 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
         searchPathHashes.push(newHash);
+        prevMoveFrom = posIdx(sm.fromRow, sm.fromCol);
+        prevMoveTo = posIdx(sm.toRow, sm.toCol);
 
         let score: number;
-        const isDirectRepeatFull = gamePositionHashes.includes(newHash);
-        if (isDirectRepeatFull) {
+
+        // Penalize moves that directly repeat a position from game history
+        const isDirectRepeat = gamePositionHashes.includes(newHash);
+        if (isDirectRepeat) {
           score = -15;
         } else if (i === 0) {
-          score = -pvs(board, depth - 1, -INF, INF, nextTurn, newHash, 1, true);
+          score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
         } else {
-          score = -pvs(board, depth - 1, -fullAlpha - 1, -fullAlpha, nextTurn, newHash, 1, true);
-          if (!searchAborted && score > fullAlpha) {
-            score = -pvs(board, depth - 1, -INF, -fullAlpha, nextTurn, newHash, 1, true);
+          // PVS null window search at root
+          score = -pvs(board, depth - 1, -alpha - 1, -alpha, nextTurn, newHash, 1, true);
+          if (!searchAborted && score > alpha && score < beta) {
+            score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
           }
         }
 
         searchPathHashes.pop();
+        prevMoveFrom = -1;
+        prevMoveTo = -1;
         undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
         if (searchAborted) break;
@@ -738,37 +862,70 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         const key = `${sm.fromRow},${sm.fromCol},${sm.toRow},${sm.toCol}`;
         rootMoveScores.set(key, score);
 
-        if (score > fullBestScore) {
-          fullBestScore = score;
-          fullBest = { from: { row: sm.fromRow, col: sm.fromCol }, to: { row: sm.toRow, col: sm.toCol }, score, searchDepth: depth };
-          if (score > fullAlpha) fullAlpha = score;
+        if (score > currentBestScore) {
+          currentBestScore = score;
+          currentBest = { from: { row: sm.fromRow, col: sm.fromCol }, to: { row: sm.toRow, col: sm.toCol }, score, searchDepth: depth };
+          if (score > alpha) alpha = score;
         }
       }
 
-      if (!searchAborted && fullBest) {
-        currentBest = fullBest;
+      if (searchAborted) break;
+
+      // Aspiration window failure handling with gradual widening
+      if (depth >= 4 && bestMove && currentBest) {
+        if (currentBest.score <= bestMove.score - aspirationDelta) {
+          // Fail low - widen alpha
+          aspirationDelta *= 2;
+          alpha = bestMove.score - aspirationDelta;
+          beta = INF; // Open up beta
+          aspirationFailed = true;
+          if (aspirationDelta > 500) {
+            alpha = -INF;
+            beta = INF;
+            aspirationFailed = true; // One more try with full window
+            aspirationDelta = INF; // Prevent further widening
+          }
+          continue;
+        }
+        if (currentBest.score >= bestMove.score + aspirationDelta) {
+          // Fail high - widen beta
+          aspirationDelta *= 2;
+          alpha = -INF; // Open up alpha
+          beta = bestMove.score + aspirationDelta;
+          aspirationFailed = true;
+          if (aspirationDelta > 500) {
+            alpha = -INF;
+            beta = INF;
+            aspirationFailed = true;
+            aspirationDelta = INF;
+          }
+          continue;
+        }
+      }
+
+      if (!searchAborted && currentBest) {
+        bestMove = currentBest;
+        completedDepth = depth;
       }
     }
 
-    if (!searchAborted && currentBest) {
-      bestMove = currentBest;
-      completedDepth = depth;
-    }
+    if (searchAborted && !bestMove) break;
+    
     totalNodesSearched += nodesSearched;
 
     // Report progress after each completed depth
-    if (onProgress && !searchAborted) {
+    if (onProgress && completedDepth >= depth) {
       onProgress(completedDepth, totalNodesSearched, Date.now() - startTime);
     }
 
-    // Adaptive time management based on actual branching factor
+    // Adaptive time management
     const depthTime = Date.now() - depthStartTime;
     const elapsed = Date.now() - startTime;
     if (depth >= 4) {
       if (prevDepthTime > 0 && depthTime > 0) {
         const actualBF = depthTime / prevDepthTime;
         const estimatedNext = elapsed + depthTime * Math.min(actualBF, 4);
-        if (estimatedNext > timeLimit * 0.9) break;
+        if (estimatedNext > timeLimit * 0.85) break;
       } else {
         if (elapsed > timeLimit * 0.4) break;
       }
@@ -790,13 +947,9 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     return topMoves[Math.floor(Math.random() * topMoves.length)];
   }
 
-  // Randomization in opening only: pick among moves with similar scores
-  // Only randomize in the first few moves to add variety to openings
-  // For hard mode: only first 3 moves; for medium: first 6 moves
-  // Never randomize when the position involves material threats (score far from 0)
+  // Randomization in opening only
   const maxRandomMoves = difficulty === 'hard' ? 3 : 6;
   if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0 && moveCounter <= maxRandomMoves) {
-    // Only randomize if position is roughly equal (no big material imbalance)
     const bestScore = bestMove.score;
     if (Math.abs(bestScore) < 300) {
       const RANDOMIZE_THRESHOLD = moveCounter <= 3 ? 20 : 10;
@@ -812,6 +965,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
       if (candidateMoves.length > 1) {
         const chosen = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+        chosen.nodesSearched = totalNodesSearched;
         return chosen;
       }
     }
@@ -819,9 +973,9 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
   if (bestMove) {
     bestMove.searchDepth = completedDepth;
+    bestMove.nodesSearched = totalNodesSearched;
   }
 
-  if (bestMove) bestMove.nodesSearched = totalNodesSearched;
   return bestMove;
 }
 

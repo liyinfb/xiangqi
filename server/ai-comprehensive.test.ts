@@ -43,11 +43,14 @@ describe("Comprehensive AI Strength Tests", () => {
     console.log(`Test 1: ${move?.from.row},${move?.from.col} -> ${move?.to.row},${move?.to.col} score=${move?.score} depth=${move?.searchDepth}`);
     
     expect(Number.isFinite(move!.score)).toBe(true);
-    // Should not move cannon TOWARD the chariot on column 7
-    // Chariot is at (8,7), cannon at (2,7). Moving to row > 2 on col 7 is toward chariot.
-    // Moving to row < 2 on col 7 is away from chariot (safe).
+    // Should not move cannon to a square on column 7 between cannon and chariot
+    // where the chariot at (8,7) can capture it.
+    // Chariot at (8,7) can capture anything on col 7 between rows 3-7 (no blocking pieces).
+    // Moving cannon to row 3-7 on col 7 = hanging the cannon.
     if (move?.from.row === 2 && move?.from.col === 7 && move.to.col === 7) {
-      expect(move.to.row).toBeLessThan(move.from.row); // Only allow moving UP (away from chariot)
+      // Cannon should not move to rows 3-7 on col 7 (chariot's attack range)
+      const inDanger = move.to.row >= 3 && move.to.row <= 7;
+      expect(inDanger).toBe(false);
     }
   }, 15000);
 
