@@ -77,7 +77,7 @@ function zobristIndex(row: number, col: number, type: PieceType, color: PieceCol
   return (row * 9 + col) * 14 + PIECE_TYPE_INDEX[type] + colorOffset;
 }
 
-function computeZobristHash(board: Board, turn: PieceColor): number {
+export function computeZobristHash(board: Board, turn: PieceColor): number {
   let hash = turn === 'black' ? ZOBRIST_TURN : 0;
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
@@ -313,6 +313,28 @@ let nodesSearched = 0;
 let startTime = 0;
 let timeLimit = 0;
 
+// Position history for repetition detection
+let gamePositionHashes: number[] = [];
+let searchPathHashes: number[] = [];
+
+function isRepetition(hash: number): boolean {
+  // Check in game history - need at least 2 occurrences to be a repetition
+  // (the position already appeared once = we've been here before, appearing again = repetition)
+  let count = 0;
+  for (let i = 0; i < gamePositionHashes.length; i++) {
+    if (gamePositionHashes[i] === hash) {
+      count++;
+      if (count >= 2) return true; // Three-fold repetition
+    }
+  }
+  // Check in current search path - if position appears in the search path,
+  // it means we're about to create a cycle
+  for (let i = 0; i < searchPathHashes.length - 1; i++) { // -1 to exclude current position
+    if (searchPathHashes[i] === hash) return true;
+  }
+  return false;
+}
+
 function quiescence(
   board: Board,
   alpha: number,
@@ -399,6 +421,12 @@ function pvs(
       searchAborted = true;
       return 0;
     }
+  }
+
+  // Repetition detection - treat repeated positions as draws (score 0)
+  // Use a slight contempt factor: AI prefers to avoid repetition
+  if (ply > 0 && isRepetition(hash)) {
+    return 0; // Draw score
   }
 
   const isMax = currentTurn === aiColor;
@@ -491,6 +519,9 @@ function pvs(
     makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
     const newHash = updateHash(hash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
+    // Track position in search path for repetition detection
+    searchPathHashes.push(newHash);
+
     let score: number;
 
     if (movesSearched === 0) {
@@ -519,6 +550,9 @@ function pvs(
         }
       }
     }
+
+    // Remove from search path
+    searchPathHashes.pop();
 
     // Undo move in place
     undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
@@ -592,11 +626,14 @@ export interface AIMove {
 
 export type ProgressCallback = (depth: number, nodes: number, elapsed: number) => void;
 
-export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty, onProgress?: ProgressCallback): AIMove | null {
+export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty, onProgress?: ProgressCallback, positionHashes?: number[]): AIMove | null {
   const maxDepth = DEPTH_MAP[difficulty];
   timeLimit = TIME_LIMIT[difficulty];
   startTime = Date.now();
   moveCounter++;
+
+  // Set position history for repetition detection
+  gamePositionHashes = positionHashes || [];
 
   const allMoves = getAllValidMovesFast(board, aiColor);
   if (allMoves.length === 0) return null;
@@ -632,6 +669,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   for (let depth = 1; depth <= maxDepth; depth++) {
     searchAborted = false;
     nodesSearched = 0;
+    searchPathHashes = [];
     depthStartTime = Date.now();
 
     // Aspiration window
@@ -657,9 +695,17 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
       const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
+      // Check if this root move leads to a repeated position
+      searchPathHashes.push(newHash);
+
       let score: number;
 
-      if (i === 0) {
+      // Penalize moves that directly repeat a position from game history
+      const isDirectRepeat = gamePositionHashes.includes(newHash);
+      if (isDirectRepeat) {
+        // This move leads to a position we've seen before - penalize it
+        score = -15; // Slight penalty to discourage repetition
+      } else if (i === 0) {
         score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, 1, true);
       } else {
         // PVS null window search: use alpha (not currentBestScore) for correct bounds
@@ -669,6 +715,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         }
       }
 
+      searchPathHashes.pop();
       undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
       if (searchAborted) break;
@@ -702,8 +749,13 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
         const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
+        searchPathHashes.push(newHash);
+
         let score: number;
-        if (i === 0) {
+        const isDirectRepeatFull = gamePositionHashes.includes(newHash);
+        if (isDirectRepeatFull) {
+          score = -15;
+        } else if (i === 0) {
           score = pvs(board, depth - 1, -Infinity, Infinity, aiColor, nextTurn, newHash, 1, true);
         } else {
           score = pvs(board, depth - 1, fullBestScore, fullBestScore + 1, aiColor, nextTurn, newHash, 1, true);
@@ -712,6 +764,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
           }
         }
 
+        searchPathHashes.pop();
         undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
         if (searchAborted) break;

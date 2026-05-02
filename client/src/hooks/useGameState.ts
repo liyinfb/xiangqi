@@ -14,7 +14,7 @@ import {
   moveToNotation,
   PIECE_CHARS,
 } from '@/lib/xiangqi';
-import { Difficulty, describeMoveContext, AIMove } from '@/lib/ai';
+import { Difficulty, describeMoveContext, AIMove, computeZobristHash } from '@/lib/ai';
 import { lookupOpeningBook, getOpeningName } from '@/lib/openingBook';
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound, playNewGameSound } from '@/lib/sounds';
 import type { AIWorkerRequest, AIWorkerResponse } from '@/lib/ai.worker';
@@ -76,6 +76,8 @@ export function useGameState() {
   // Use ref to track board history for undo
   const boardHistory = useRef<Board[]>([createInitialBoard()]);
   const turnHistory = useRef<PieceColor[]>(['red']);
+  // Track position hashes for repetition detection
+  const positionHashesRef = useRef<number[]>([computeZobristHash(createInitialBoard(), 'red')]);
 
   // Web Worker ref
   const workerRef = useRef<Worker | null>(null);
@@ -197,6 +199,7 @@ export function useGameState() {
     // Save to history for undo
     boardHistory.current.push(newBoard);
     turnHistory.current.push(currentPlayerColor);
+    positionHashesRef.current.push(computeZobristHash(newBoard, currentPlayerColor));
 
     // Check game status
     if (isCheckmate(newBoard, currentPlayerColor)) {
@@ -296,6 +299,7 @@ export function useGameState() {
     // Save to history for undo
     boardHistory.current.push(newBoard);
     turnHistory.current.push(currentAiColor);
+    positionHashesRef.current.push(computeZobristHash(newBoard, currentAiColor));
 
     // Check game status
     if (isCheckmate(newBoard, currentAiColor)) {
@@ -392,6 +396,7 @@ export function useGameState() {
         difficulty: difficultyRef.current,
         requestId: currentRequestId,
         isNewGame: isNewGameRef.current,
+        positionHashes: positionHashesRef.current,
       };
       isNewGameRef.current = false;
       workerRef.current.postMessage(request);
@@ -399,7 +404,7 @@ export function useGameState() {
       // Fallback: run in main thread if worker not available
       import('../lib/ai').then(({ getBestMove }) => {
         if (requestIdRef.current !== currentRequestId) return;
-        const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current);
+        const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current, undefined, positionHashesRef.current);
         if (thinkingTimerRef.current) {
           clearInterval(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
@@ -458,6 +463,7 @@ export function useGameState() {
     setReplayIndex(null);
     boardHistory.current = [initialBoard];
     turnHistory.current = ['red'];
+    positionHashesRef.current = [computeZobristHash(initialBoard, 'red')];
     if (soundEnabled) playNewGameSound();
 
     // If player is black, AI (red) moves first
@@ -496,6 +502,7 @@ export function useGameState() {
 
     boardHistory.current = newBoardHistory;
     turnHistory.current = newTurnHistory;
+    positionHashesRef.current = positionHashesRef.current.slice(0, newBoardHistory.length);
 
     // Recalculate captured pieces
     const newCaptured: { red: Piece[]; black: Piece[] } = { red: [], black: [] };
@@ -609,6 +616,7 @@ export function useGameState() {
       // Rebuild board history
       boardHistory.current = [createInitialBoard()];
       turnHistory.current = ['red'];
+      positionHashesRef.current = [computeZobristHash(createInitialBoard(), 'red')];
       let tempBoard = createInitialBoard();
       for (const move of (data.moveHistory || [])) {
         const { newBoard } = makeMove(tempBoard, move.from, move.to);
@@ -616,6 +624,7 @@ export function useGameState() {
         boardHistory.current.push(newBoard);
         const nextTurn: PieceColor = turnHistory.current[turnHistory.current.length - 1] === 'red' ? 'black' : 'red';
         turnHistory.current.push(nextTurn);
+        positionHashesRef.current.push(computeZobristHash(newBoard, nextTurn));
       }
 
       // If it's AI's turn after loading, trigger AI move
