@@ -28,3 +28,7 @@
 - [x] Reduce hard mode time limit to 5 seconds
 - [x] Increase hard mode search depth for stronger play
 - [x] Add randomness to avoid repetitive opening moves each game
+- [x] Raise max depth limit from 12 to 20 for hard mode
+- [x] Add Futility Pruning to skip hopeless nodes at shallow depths
+- [x] Add Razoring to cut off clearly losing positions early
+- [x] Optimize move generation and evaluation for speed (fast in-place make/undo, capture-only generator, isSquareAttacked)

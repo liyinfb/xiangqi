@@ -622,6 +622,310 @@ export function getAllValidMoves(board: Board, color: PieceColor): { from: Posit
   return allMoves;
 }
 
+// ==================== Fast Move Generation for AI ====================
+// Uses in-place make/undo to avoid cloning the board for every move legality check
+
+// Fast check if a specific square is attacked by the opponent
+function isSquareAttacked(board: Board, targetRow: number, targetCol: number, byColor: PieceColor): boolean {
+  // Check attacks by chariot/cannon along lines
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (const [dr, dc] of directions) {
+    let r = targetRow + dr;
+    let c = targetCol + dc;
+    let jumped = false;
+    while (r >= 0 && r <= 9 && c >= 0 && c <= 8) {
+      const p = board[r][c];
+      if (p) {
+        if (!jumped) {
+          // Direct line of sight - chariot or general can attack
+          if (p.color === byColor) {
+            if (p.type === 'chariot') return true;
+            // General facing (flying general)
+            if (p.type === 'general') return true;
+          }
+          jumped = true;
+        } else {
+          // After one piece jumped - cannon can attack
+          if (p.color === byColor && p.type === 'cannon') return true;
+          break;
+        }
+      }
+      r += dr;
+      c += dc;
+    }
+  }
+
+  // Check attacks by horse
+  const horseAttacks = [
+    [-2, -1, -1, 0], [-2, 1, -1, 0],
+    [2, -1, 1, 0], [2, 1, 1, 0],
+    [-1, -2, 0, -1], [-1, 2, 0, 1],
+    [1, -2, 0, -1], [1, 2, 0, 1],
+  ];
+  for (const [dr, dc, br, bc] of horseAttacks) {
+    const hr = targetRow + dr;
+    const hc = targetCol + dc;
+    if (hr >= 0 && hr <= 9 && hc >= 0 && hc <= 8) {
+      const blockR = targetRow + br;
+      const blockC = targetCol + bc;
+      if (!board[blockR][blockC]) {
+        const p = board[hr][hc];
+        if (p && p.color === byColor && p.type === 'horse') return true;
+      }
+    }
+  }
+
+  // Check attacks by soldier
+  if (byColor === 'red') {
+    // Red soldiers attack upward and sideways after crossing
+    if (targetRow + 1 <= 9) {
+      const p = board[targetRow + 1][targetCol];
+      if (p && p.color === 'red' && p.type === 'soldier') return true;
+    }
+    // Sideways attack (soldier must have crossed river: row <= 4)
+    if (targetCol - 1 >= 0) {
+      const p = board[targetRow][targetCol - 1];
+      if (p && p.color === 'red' && p.type === 'soldier' && targetRow <= 4) return true;
+    }
+    if (targetCol + 1 <= 8) {
+      const p = board[targetRow][targetCol + 1];
+      if (p && p.color === 'red' && p.type === 'soldier' && targetRow <= 4) return true;
+    }
+  } else {
+    // Black soldiers attack downward and sideways after crossing
+    if (targetRow - 1 >= 0) {
+      const p = board[targetRow - 1][targetCol];
+      if (p && p.color === 'black' && p.type === 'soldier') return true;
+    }
+    if (targetCol - 1 >= 0) {
+      const p = board[targetRow][targetCol - 1];
+      if (p && p.color === 'black' && p.type === 'soldier' && targetRow >= 5) return true;
+    }
+    if (targetCol + 1 <= 8) {
+      const p = board[targetRow][targetCol + 1];
+      if (p && p.color === 'black' && p.type === 'soldier' && targetRow >= 5) return true;
+    }
+  }
+
+  return false;
+}
+
+// // Generate only capture moves (for quiescence search - much faster than generating all moves)
+export function getCaptureMovesFast(board: Board, color: PieceColor): { from: Position; to: Position }[] {
+  const captures: { from: Position; to: Position }[] = [];
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (piece && piece.color === color) {
+        const targets = getPseudoMoves(board, row, col, piece);
+        for (const to of targets) {
+          // Only consider captures
+          const victim = board[to.row][to.col];
+          if (!victim) continue;
+          
+          // Make move in place to check legality
+          board[to.row][to.col] = piece;
+          board[row][col] = null;
+          if (!isInCheckFast(board, color) && !generalsAreFacingFast(board)) {
+            captures.push({ from: { row, col }, to });
+          }
+          // Undo
+          board[row][col] = piece;
+          board[to.row][to.col] = victim;
+        }
+      }
+    }
+  }
+  return captures;
+}
+
+// Fast isInCheck using isSquareAttacked
+function isInCheckFast(board: Board, color: PieceColor): boolean {
+  // Find general
+  const startRow = color === 'red' ? 7 : 0;
+  const endRow = color === 'red' ? 9 : 2;
+  for (let row = startRow; row <= endRow; row++) {
+    for (let col = 3; col <= 5; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general' && p.color === color) {
+        const opponentColor = color === 'red' ? 'black' : 'red';
+        return isSquareAttacked(board, row, col, opponentColor);
+      }
+    }
+  }
+  return true; // General not found = captured
+}
+
+// Fast flying general check (only checks the column between generals)
+function generalsAreFacingFast(board: Board): boolean {
+  // Find both generals quickly in their palace areas
+  let redRow = -1, redCol = -1, blackRow = -1, blackCol = -1;
+  for (let row = 7; row <= 9; row++) {
+    for (let col = 3; col <= 5; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general' && p.color === 'red') {
+        redRow = row; redCol = col;
+      }
+    }
+  }
+  for (let row = 0; row <= 2; row++) {
+    for (let col = 3; col <= 5; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general' && p.color === 'black') {
+        blackRow = row; blackCol = col;
+      }
+    }
+  }
+  if (redCol < 0 || blackCol < 0 || redCol !== blackCol) return false;
+  for (let row = blackRow + 1; row < redRow; row++) {
+    if (board[row][redCol] !== null) return false;
+  }
+  return true;
+}
+
+// Generate pseudo-legal moves (without check validation) for a piece
+function getPseudoMoves(board: Board, row: number, col: number, piece: Piece): Position[] {
+  const moves: Position[] = [];
+  const { type, color } = piece;
+
+  switch (type) {
+    case 'general': {
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      for (const [dr, dc] of dirs) {
+        const nr = row + dr, nc = col + dc;
+        if (isInPalace(nr, nc, color)) {
+          const t = board[nr][nc];
+          if (!t || t.color !== color) moves.push({ row: nr, col: nc });
+        }
+      }
+      break;
+    }
+    case 'advisor': {
+      const dirs = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+      for (const [dr, dc] of dirs) {
+        const nr = row + dr, nc = col + dc;
+        if (isInPalace(nr, nc, color)) {
+          const t = board[nr][nc];
+          if (!t || t.color !== color) moves.push({ row: nr, col: nc });
+        }
+      }
+      break;
+    }
+    case 'elephant': {
+      const dirs = [[-2, -2], [-2, 2], [2, -2], [2, 2]];
+      const blks = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+      for (let i = 0; i < 4; i++) {
+        const nr = row + dirs[i][0], nc = col + dirs[i][1];
+        if (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8 && isOnOwnSide(nr, color)) {
+          if (!board[row + blks[i][0]][col + blks[i][1]]) {
+            const t = board[nr][nc];
+            if (!t || t.color !== color) moves.push({ row: nr, col: nc });
+          }
+        }
+      }
+      break;
+    }
+    case 'horse': {
+      const jumps = [
+        [-2, -1, -1, 0], [-2, 1, -1, 0],
+        [2, -1, 1, 0], [2, 1, 1, 0],
+        [-1, -2, 0, -1], [-1, 2, 0, 1],
+        [1, -2, 0, -1], [1, 2, 0, 1],
+      ];
+      for (const [dr, dc, br, bc] of jumps) {
+        const nr = row + dr, nc = col + dc;
+        if (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8 && !board[row + br][col + bc]) {
+          const t = board[nr][nc];
+          if (!t || t.color !== color) moves.push({ row: nr, col: nc });
+        }
+      }
+      break;
+    }
+    case 'chariot': {
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      for (const [dr, dc] of dirs) {
+        let nr = row + dr, nc = col + dc;
+        while (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8) {
+          const t = board[nr][nc];
+          if (!t) { moves.push({ row: nr, col: nc }); }
+          else { if (t.color !== color) moves.push({ row: nr, col: nc }); break; }
+          nr += dr; nc += dc;
+        }
+      }
+      break;
+    }
+    case 'cannon': {
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      for (const [dr, dc] of dirs) {
+        let nr = row + dr, nc = col + dc;
+        let jumped = false;
+        while (nr >= 0 && nr <= 9 && nc >= 0 && nc <= 8) {
+          const t = board[nr][nc];
+          if (!jumped) {
+            if (!t) moves.push({ row: nr, col: nc });
+            else jumped = true;
+          } else {
+            if (t) { if (t.color !== color) moves.push({ row: nr, col: nc }); break; }
+          }
+          nr += dr; nc += dc;
+        }
+      }
+      break;
+    }
+    case 'soldier': {
+      if (color === 'red') {
+        if (row - 1 >= 0) { const t = board[row - 1][col]; if (!t || t.color !== color) moves.push({ row: row - 1, col }); }
+        if (row <= 4) {
+          if (col - 1 >= 0) { const t = board[row][col - 1]; if (!t || t.color !== color) moves.push({ row, col: col - 1 }); }
+          if (col + 1 <= 8) { const t = board[row][col + 1]; if (!t || t.color !== color) moves.push({ row, col: col + 1 }); }
+        }
+      } else {
+        if (row + 1 <= 9) { const t = board[row + 1][col]; if (!t || t.color !== color) moves.push({ row: row + 1, col }); }
+        if (row >= 5) {
+          if (col - 1 >= 0) { const t = board[row][col - 1]; if (!t || t.color !== color) moves.push({ row, col: col - 1 }); }
+          if (col + 1 <= 8) { const t = board[row][col + 1]; if (!t || t.color !== color) moves.push({ row, col: col + 1 }); }
+        }
+      }
+      break;
+    }
+  }
+  return moves;
+}
+
+// Fast getAllValidMoves using in-place make/undo (avoids cloneBoard per move)
+export function getAllValidMovesFast(board: Board, color: PieceColor): { from: Position; to: Position }[] {
+  const allMoves: { from: Position; to: Position }[] = [];
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (piece && piece.color === color) {
+        const targets = getPseudoMoves(board, row, col, piece);
+        for (const to of targets) {
+          // Make move in place
+          const captured = board[to.row][to.col];
+          board[to.row][to.col] = piece;
+          board[row][col] = null;
+
+          // Check legality
+          if (!isInCheckFast(board, color) && !generalsAreFacingFast(board)) {
+            allMoves.push({ from: { row, col }, to });
+          }
+
+          // Undo move in place
+          board[row][col] = piece;
+          board[to.row][to.col] = captured;
+        }
+      }
+    }
+  }
+  return allMoves;
+}
+
+// Fast isInCheck using the optimized square attack detection
+export function isInCheckFastExport(board: Board, color: PieceColor): boolean {
+  return isInCheckFast(board, color);
+}
+
 export function makeMove(board: Board, from: Position, to: Position): { newBoard: Board; captured: Piece | null } {
   const newBoard = cloneBoard(board);
   const captured = newBoard[to.row][to.col];

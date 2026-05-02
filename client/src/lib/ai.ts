@@ -12,8 +12,11 @@ import {
   PIECE_VALUES,
   POSITION_BONUS,
   getAllValidMoves,
+  getAllValidMovesFast,
+  getCaptureMovesFast,
   isCheckmate,
   isInCheck,
+  isInCheckFastExport,
   makeMove,
 } from './xiangqi';
 
@@ -23,8 +26,13 @@ export type Difficulty = 'easy' | 'medium' | 'hard';
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 3,
   medium: 5,
-  hard: 12,
+  hard: 20,
 };
+
+// Futility pruning margins indexed by depth
+const FUTILITY_MARGIN = [0, 200, 350, 500, 650, 800];
+// Razoring margin
+const RAZOR_MARGIN = 600;
 
 // Time limits per difficulty (ms)
 const TIME_LIMIT: Record<Difficulty, number> = {
@@ -249,10 +257,10 @@ function evaluateFull(board: Board, aiColor: PieceColor, currentTurn: PieceColor
   const opponentColor = aiColor === 'red' ? 'black' : 'red';
   
   // Check bonuses
-  if (isInCheck(board, opponentColor)) {
+  if (isInCheckFastExport(board, opponentColor)) {
     score += 40;
   }
-  if (isInCheck(board, aiColor)) {
+  if (isInCheckFastExport(board, aiColor)) {
     score -= 40;
   }
   
@@ -377,11 +385,11 @@ function quiescence(
     if (standPat < beta) beta = standPat;
   }
   
-  // Generate only captures
-  const allMoves = getAllValidMoves(board, currentTurn);
+  // Generate only captures using fast capture generator
+  const captureMoves = getCaptureMovesFast(board, currentTurn);
   const captures: { from: Position; to: Position; victimValue: number }[] = [];
   
-  for (const m of allMoves) {
+  for (const m of captureMoves) {
     const victim = board[m.to.row][m.to.col];
     if (victim) {
       captures.push({ ...m, victimValue: EVAL_PIECE_VALUES[victim.type] });
@@ -440,9 +448,9 @@ function pvs(
 ): number {
   if (searchAborted) return 0;
   
-  // Time check every 2048 nodes
+  // Time check every 1024 nodes for tighter time control
   nodesSearched++;
-  if ((nodesSearched & 2047) === 0) {
+  if ((nodesSearched & 1023) === 0) {
     if (Date.now() - startTime > timeLimit) {
       searchAborted = true;
       return 0;
@@ -450,14 +458,14 @@ function pvs(
   }
   
   const isMax = currentTurn === aiColor;
-  const inCheck = isInCheck(board, currentTurn);
+  const inCheck = isInCheckFastExport(board, currentTurn);
   
   // Check extension: extend search when in check
   if (inCheck) depth++;
   
   // Leaf node
   if (depth <= 0) {
-    return quiescence(board, alpha, beta, aiColor, currentTurn, hash, 6);
+    return quiescence(board, alpha, beta, aiColor, currentTurn, hash, 8);
   }
   
   // TT probe
@@ -467,8 +475,21 @@ function pvs(
   }
   const ttMove = ttResult?.bestMove || null;
   
+  // Razoring: if static eval is far below alpha at low depth, drop to qsearch
+  if (!inCheck && depth <= 3 && ply > 0) {
+    const staticEval = evaluateBoard(board, aiColor);
+    if (isMax && staticEval + RAZOR_MARGIN < alpha) {
+      const qScore = quiescence(board, alpha, beta, aiColor, currentTurn, hash, 8);
+      if (qScore < alpha) return qScore;
+    }
+    if (!isMax && staticEval - RAZOR_MARGIN > beta) {
+      const qScore = quiescence(board, alpha, beta, aiColor, currentTurn, hash, 8);
+      if (qScore > beta) return qScore;
+    }
+  }
+  
   // Checkmate detection
-  const allMoves = getAllValidMoves(board, currentTurn);
+  const allMoves = getAllValidMovesFast(board, currentTurn);
   if (allMoves.length === 0) {
     if (inCheck) {
       // Checkmate
@@ -494,7 +515,7 @@ function pvs(
     }
     
     if (hasMaterial) {
-      const R = depth >= 6 ? 3 : 2; // Adaptive reduction
+      const R = depth >= 8 ? 4 : depth >= 6 ? 3 : 2; // More aggressive adaptive reduction
       const nextTurn = currentTurn === 'red' ? 'black' : 'red';
       const nullHash = hash ^ ZOBRIST_TURN;
       
@@ -507,6 +528,9 @@ function pvs(
       if (!isMax && nullScore <= alpha) return alpha;
     }
   }
+  
+  // Static eval for futility pruning
+  const staticEvalForFutility = (!inCheck && depth <= 5) ? evaluateBoard(board, aiColor) : 0;
   
   // Sort moves
   sortMoves(board, allMoves, ply, ttMove);
@@ -521,6 +545,14 @@ function pvs(
     const move = allMoves[i];
     const piece = board[move.from.row][move.from.col]!;
     const captured = board[move.to.row][move.to.col];
+    
+    // Futility Pruning: skip quiet moves that can't possibly improve alpha/beta
+    if (!inCheck && depth <= 5 && movesSearched > 0 && !captured) {
+      const margin = FUTILITY_MARGIN[depth] || 800;
+      if (isMax && staticEvalForFutility + margin < alpha) continue;
+      if (!isMax && staticEvalForFutility - margin > beta) continue;
+    }
+    
     const { newBoard } = makeMove(board, move.from, move.to);
     const newHash = updateHash(hash, move.from, move.to, piece, captured, currentTurn);
     
@@ -530,13 +562,14 @@ function pvs(
       // Full window search for first move (PV node)
       score = pvs(newBoard, depth - 1, alpha, beta, aiColor, nextTurn, newHash, ply + 1, true);
     } else {
-      // Late Move Reduction
+      // Late Move Reduction - more aggressive
       let reduction = 0;
-      if (depth >= 3 && movesSearched >= 4 && !captured && !inCheck) {
-        const newInCheck = isInCheck(newBoard, nextTurn);
+      if (depth >= 3 && movesSearched >= 3 && !captured && !inCheck) {
+        const newInCheck = isInCheckFastExport(newBoard, nextTurn);
         if (!newInCheck) {
-          reduction = movesSearched >= 8 ? 2 : 1;
-          if (depth <= 4) reduction = Math.min(reduction, 1);
+          // More aggressive LMR formula
+          reduction = Math.floor(Math.log(depth) * Math.log(movesSearched) * 0.5);
+          reduction = Math.max(1, Math.min(reduction, depth - 2));
         }
       }
       
@@ -625,15 +658,14 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   startTime = Date.now();
   moveCounter++;
   
-  const allMoves = getAllValidMoves(board, aiColor);
+  const allMoves = getAllValidMovesFast(board, aiColor);
   if (allMoves.length === 0) return null;
   if (allMoves.length === 1) {
     return { from: allMoves[0].from, to: allMoves[0].to, score: 0, searchDepth: 1 };
   }
   
-  // Clear transposition table at the start of each search to avoid stale data
-  // and to introduce variation between games
-  ttClear();
+  // Don't clear TT between moves - accumulated knowledge helps search deeper
+  // Randomization is handled separately via move counter
   
   // Compute initial hash
   const rootHash = computeZobristHash(board, aiColor);
@@ -748,8 +780,9 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       completedDepth = depth;
     }
     
-    // Time management: don't start next iteration if >50% time used
-    if (Date.now() - startTime > timeLimit * 0.5) {
+    // Time management: don't start next iteration if >60% time used
+    // (slightly more aggressive to squeeze one more depth level)
+    if (Date.now() - startTime > timeLimit * 0.6) {
       break;
     }
   }
