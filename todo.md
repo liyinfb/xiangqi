@@ -53,3 +53,4 @@
 - [x] Resume game from saved state (including AI turn detection)
 - [x] Add step-by-step replay controls for saved game history
 - [x] Fix AI blunder bug: hard mode AI gives away pieces (送子) causing massive disadvantage
+- [x] Increase hard mode thinking time from 5s to 8s

@@ -39,7 +39,7 @@ const RAZOR_MARGIN = 600;
 const TIME_LIMIT: Record<Difficulty, number> = {
   easy: 500,
   medium: 3000,
-  hard: 5000,
+  hard: 8000,
 };
 
 // Move counter for randomization
