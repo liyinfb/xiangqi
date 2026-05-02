@@ -172,6 +172,9 @@ export function useGameState() {
     const { newBoard, captured } = makeMove(currentBoard, aiMove.from, aiMove.to);
     const move: Move = { from: aiMove.from, to: aiMove.to, piece, captured: captured || undefined };
 
+    // Eagerly update ref so next opening book lookup sees this move
+    moveHistoryRef.current = [...moveHistoryRef.current, { from: aiMove.from, to: aiMove.to }];
+
     setBoard(newBoard);
     setLastMove({ from: aiMove.from, to: aiMove.to });
     setMoveHistory(prev => {
@@ -270,10 +273,15 @@ export function useGameState() {
 
     const move: Move = { from, to, piece, captured: captured || undefined };
 
+    // Update moveHistoryRef eagerly BEFORE any async operations
+    // so opening book lookup in makeAIMove sees the latest history
+    moveHistoryRef.current = [...moveHistoryRef.current, { from, to }];
+
     setBoard(newBoard);
     setLastMove({ from, to });
     setMoveHistory(prev => {
       const newHistory = [...prev, move];
+      // Ref already updated above, keep in sync
       moveHistoryRef.current = newHistory.map(m => ({ from: m.from, to: m.to }));
       return newHistory;
     });
@@ -332,7 +340,8 @@ export function useGameState() {
     const currentRequestId = requestIdRef.current;
 
     // Check opening book first
-    const bookMove = lookupOpeningBook(moveHistoryRef.current, currentAiColor);
+    const historyForBook = moveHistoryRef.current;
+    const bookMove = lookupOpeningBook(historyForBook, currentAiColor);
     if (bookMove) {
       // Verify the book move is valid on the current board
       const piece = currentBoard[bookMove.from.row][bookMove.from.col];
