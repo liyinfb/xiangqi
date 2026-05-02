@@ -430,22 +430,18 @@ function pvs(
     }
   }
 
-  // Generate moves
-  const allMoves = getAllValidMovesFast(board, currentTurn);
-  if (allMoves.length === 0) {
-    if (inCheck) return isMax ? -200000 + ply : 200000 - ply;
-    return 0;
-  }
-
-  // Null Move Pruning
+  // Null Move Pruning (before move generation to save time on cutoffs)
   if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0) {
+    // Quick material check - scan only major piece positions (chariot, cannon, horse)
     let hasMaterial = false;
-    outer: for (let r = 0; r <= 9; r++) {
+    for (let r = 0; r <= 9; r++) {
       for (let c = 0; c <= 8; c++) {
         const p = board[r][c];
-        if (p && p.color === currentTurn && p.type !== 'soldier' && p.type !== 'general') {
-          hasMaterial = true;
-          break outer;
+        if (p && p.color === currentTurn) {
+          const t = p.type;
+          if (t === 'chariot' || t === 'cannon' || t === 'horse') {
+            hasMaterial = true; r = 10; break; // break both loops
+          }
         }
       }
     }
@@ -461,6 +457,13 @@ function pvs(
       if (isMax && nullScore >= beta) return beta;
       if (!isMax && nullScore <= alpha) return alpha;
     }
+  }
+
+  // Generate moves
+  const allMoves = getAllValidMovesFast(board, currentTurn);
+  if (allMoves.length === 0) {
+    if (inCheck) return isMax ? -200000 + ply : 200000 - ply;
+    return 0;
   }
 
   // Static eval for futility
@@ -587,6 +590,7 @@ export interface AIMove {
   to: Position;
   score: number;
   searchDepth: number;
+  nodesSearched?: number;
 }
 
 export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty): AIMove | null {
@@ -622,10 +626,14 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   // Track root move scores for randomization
   const rootMoveScores: Map<string, number> = new Map();
 
-  // Iterative deepening
+  // Iterative deepening with timing
+  let prevDepthTime = 0;
+  let depthStartTime = 0;
+  let totalNodesSearched = 0;
   for (let depth = 1; depth <= maxDepth; depth++) {
     searchAborted = false;
     nodesSearched = 0;
+    depthStartTime = Date.now();
 
     // Aspiration window
     let alpha = -Infinity;
@@ -726,13 +734,23 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       bestMove = currentBest;
       completedDepth = depth;
     }
+    totalNodesSearched += nodesSearched;
 
-    // Time management: stop if we've used enough time that next depth likely won't complete
+    // Adaptive time management based on actual branching factor
+    const depthTime = Date.now() - depthStartTime;
     const elapsed = Date.now() - startTime;
-    // With TT + good ordering, effective branching factor ~3x
-    // Stop if elapsed * 3 > timeLimit (i.e., elapsed > 33%)
-    // But always try at least depth 4
-    if (depth >= 4 && elapsed * 3 > timeLimit) break;
+    if (depth >= 4) {
+      // Estimate time for next depth based on ratio between this and previous depth
+      if (prevDepthTime > 0 && depthTime > 0) {
+        const actualBF = depthTime / prevDepthTime;
+        const estimatedNext = elapsed + depthTime * Math.min(actualBF, 4);
+        if (estimatedNext > timeLimit * 0.9) break;
+      } else {
+        // Fallback: use 40% threshold
+        if (elapsed > timeLimit * 0.4) break;
+      }
+    }
+    prevDepthTime = depthTime;
   }
 
   // For easy difficulty, sometimes pick a suboptimal move
@@ -773,6 +791,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     bestMove.searchDepth = completedDepth;
   }
 
+  if (bestMove) bestMove.nodesSearched = totalNodesSearched;
   return bestMove;
 }
 

@@ -707,26 +707,40 @@ function isSquareAttacked(board: Board, targetRow: number, targetCol: number, by
   return false;
 }
 
-// // Generate only capture moves (for quiescence search - much faster than generating all moves)
+// Generate only capture moves (for quiescence search - much faster than generating all moves)
 export function getCaptureMovesFast(board: Board, color: PieceColor): { from: Position; to: Position }[] {
   const captures: { from: Position; to: Position }[] = [];
+  // Find general positions once
+  let myGenRow = -1, myGenCol = -1, oppGenRow = -1, oppGenCol = -1;
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general') {
+        if (p.color === color) { myGenRow = row; myGenCol = col; }
+        else { oppGenRow = row; oppGenCol = col; }
+      }
+    }
+  }
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
       const piece = board[row][col];
       if (piece && piece.color === color) {
         const targets = getPseudoMoves(board, row, col, piece);
         for (const to of targets) {
-          // Only consider captures
           const victim = board[to.row][to.col];
           if (!victim) continue;
           
-          // Make move in place to check legality
+          // Track general position after move
+          let curGenRow = myGenRow, curGenCol = myGenCol;
+          let curOppRow = oppGenRow, curOppCol = oppGenCol;
+          if (piece.type === 'general') { curGenRow = to.row; curGenCol = to.col; }
+          if (victim.type === 'general') { curOppRow = -1; curOppCol = -1; }
+          
           board[to.row][to.col] = piece;
           board[row][col] = null;
-          if (!isInCheckFast(board, color) && !generalsAreFacingFast(board)) {
+          if (!isInCheckFast(board, color, curGenRow, curGenCol) && !generalsAreFacingFast(board, color === 'red' ? curGenRow : curOppRow, color === 'red' ? curGenCol : curOppCol, color === 'black' ? curGenRow : curOppRow, color === 'black' ? curGenCol : curOppCol)) {
             captures.push({ from: { row, col }, to });
           }
-          // Undo
           board[row][col] = piece;
           board[to.row][to.col] = victim;
         }
@@ -736,48 +750,50 @@ export function getCaptureMovesFast(board: Board, color: PieceColor): { from: Po
   return captures;
 }
 
-// Fast isInCheck using isSquareAttacked
-function isInCheckFast(board: Board, color: PieceColor): boolean {
-  // Find general
-  const startRow = color === 'red' ? 7 : 0;
-  const endRow = color === 'red' ? 9 : 2;
-  for (let row = startRow; row <= endRow; row++) {
-    for (let col = 3; col <= 5; col++) {
-      const p = board[row][col];
-      if (p && p.type === 'general' && p.color === color) {
-        const opponentColor = color === 'red' ? 'black' : 'red';
-        return isSquareAttacked(board, row, col, opponentColor);
+// Fast isInCheck using isSquareAttacked - with optional known general position
+function isInCheckFast(board: Board, color: PieceColor, knownRow?: number, knownCol?: number): boolean {
+  let gRow = knownRow ?? -1;
+  let gCol = knownCol ?? -1;
+  if (gRow < 0) {
+    const startRow = color === 'red' ? 7 : 0;
+    const endRow = color === 'red' ? 9 : 2;
+    for (let row = startRow; row <= endRow; row++) {
+      for (let col = 3; col <= 5; col++) {
+        const p = board[row][col];
+        if (p && p.type === 'general' && p.color === color) {
+          gRow = row; gCol = col;
+          break;
+        }
       }
+      if (gRow >= 0) break;
     }
   }
-  return true; // General not found = captured
+  if (gRow < 0) return true; // General not found = captured
+  const opponentColor = color === 'red' ? 'black' : 'red';
+  return isSquareAttacked(board, gRow, gCol, opponentColor);
 }
 
-// Fast flying general check (only checks the column between generals)
-function generalsAreFacingFast(board: Board): boolean {
-  // Find both generals quickly in their palace areas (only 9 cells each)
-  let redRow = -1, redCol = -1, blackRow = -1, blackCol = -1;
-  // Red palace: rows 7-9, cols 3-5
-  for (let row = 7; row <= 9; row++) {
-    for (let col = 3; col <= 5; col++) {
-      const p = board[row][col];
-      if (p && p.type === 'general') {
-        redRow = row; redCol = col;
-        break;
+// Fast flying general check with known positions
+function generalsAreFacingFast(board: Board, rRow?: number, rCol?: number, bRow?: number, bCol?: number): boolean {
+  let redRow = rRow ?? -1, redCol = rCol ?? -1;
+  let blackRow = bRow ?? -1, blackCol = bCol ?? -1;
+  if (redRow < 0) {
+    for (let row = 7; row <= 9; row++) {
+      for (let col = 3; col <= 5; col++) {
+        const p = board[row][col];
+        if (p && p.type === 'general') { redRow = row; redCol = col; break; }
       }
+      if (redRow >= 0) break;
     }
-    if (redRow >= 0) break;
   }
-  // Black palace: rows 0-2, cols 3-5
-  for (let row = 0; row <= 2; row++) {
-    for (let col = 3; col <= 5; col++) {
-      const p = board[row][col];
-      if (p && p.type === 'general') {
-        blackRow = row; blackCol = col;
-        break;
+  if (blackRow < 0) {
+    for (let row = 0; row <= 2; row++) {
+      for (let col = 3; col <= 5; col++) {
+        const p = board[row][col];
+        if (p && p.type === 'general') { blackRow = row; blackCol = col; break; }
       }
+      if (blackRow >= 0) break;
     }
-    if (blackRow >= 0) break;
   }
   if (redCol < 0 || blackCol < 0 || redCol !== blackCol) return false;
   for (let row = blackRow + 1; row < redRow; row++) {
@@ -896,21 +912,45 @@ function getPseudoMoves(board: Board, row: number, col: number, piece: Piece): P
 }
 
 // Fast getAllValidMoves using in-place make/undo (avoids cloneBoard per move)
+// Tracks general positions to avoid searching for them on every legality check
 export function getAllValidMovesFast(board: Board, color: PieceColor): { from: Position; to: Position }[] {
   const allMoves: { from: Position; to: Position }[] = [];
+  // Find general positions once at the start
+  let myGenRow = -1, myGenCol = -1, oppGenRow = -1, oppGenCol = -1;
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general') {
+        if (p.color === color) { myGenRow = row; myGenCol = col; }
+        else { oppGenRow = row; oppGenCol = col; }
+      }
+    }
+  }
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
       const piece = board[row][col];
       if (piece && piece.color === color) {
         const targets = getPseudoMoves(board, row, col, piece);
         for (const to of targets) {
-          // Make move in place
           const captured = board[to.row][to.col];
+          
+          // Track general position after this move
+          let curGenRow = myGenRow, curGenCol = myGenCol;
+          let curOppRow = oppGenRow, curOppCol = oppGenCol;
+          if (piece.type === 'general') { curGenRow = to.row; curGenCol = to.col; }
+          if (captured && captured.type === 'general') { curOppRow = -1; curOppCol = -1; }
+          
+          // Make move in place
           board[to.row][to.col] = piece;
           board[row][col] = null;
 
-          // Check legality
-          if (!isInCheckFast(board, color) && !generalsAreFacingFast(board)) {
+          // Check legality with known general positions
+          if (!isInCheckFast(board, color, curGenRow, curGenCol) && 
+              !generalsAreFacingFast(board, 
+                color === 'red' ? curGenRow : curOppRow, 
+                color === 'red' ? curGenCol : curOppCol, 
+                color === 'black' ? curGenRow : curOppRow, 
+                color === 'black' ? curGenCol : curOppCol)) {
             allMoves.push({ from: { row, col }, to });
           }
 

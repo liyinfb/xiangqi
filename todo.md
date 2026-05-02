@@ -38,3 +38,6 @@
 - [x] Pre-allocated constant arrays for attack detection (avoid per-call GC)
 - [x] Optimized general-finding with early break in generalsAreFacingFast
 - [x] Removed expensive isInCheck from evaluation function (handled by search extensions)
+- [x] Create self-play test framework (AI vs AI at different difficulty levels)
+- [x] Analyze self-play performance metrics (nodes/second, depth reached, game length)
+- [x] Optimize algorithm efficiency based on self-play findings (general position tracking, NMP before move gen, adaptive time management)
