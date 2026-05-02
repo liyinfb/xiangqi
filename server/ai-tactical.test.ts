@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBestMove, resetMoveCounter } from "../client/src/lib/ai";
+import { getBestMove, resetMoveCounter, ttClear } from "../client/src/lib/ai";
 import { Board, PieceColor, getAllValidMoves, isInCheck } from "../client/src/lib/xiangqi";
 
 /**
@@ -10,6 +10,7 @@ import { Board, PieceColor, getAllValidMoves, isInCheck } from "../client/src/li
  */
 
 function checkNoBlunder(board: Board, color: PieceColor, description: string): void {
+  ttClear();
   resetMoveCounter();
   const move = getBestMove(board, color, 'hard');
   expect(move).not.toBeNull();

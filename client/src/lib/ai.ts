@@ -790,23 +790,30 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     return topMoves[Math.floor(Math.random() * topMoves.length)];
   }
 
-  // Randomization in opening: pick among moves with similar scores (using tracked scores)
-  if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0) {
-    const RANDOMIZE_THRESHOLD = moveCounter <= 6 ? 30 : 10;
+  // Randomization in opening only: pick among moves with similar scores
+  // Only randomize in the first few moves to add variety to openings
+  // For hard mode: only first 3 moves; for medium: first 6 moves
+  // Never randomize when the position involves material threats (score far from 0)
+  const maxRandomMoves = difficulty === 'hard' ? 3 : 6;
+  if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0 && moveCounter <= maxRandomMoves) {
+    // Only randomize if position is roughly equal (no big material imbalance)
     const bestScore = bestMove.score;
+    if (Math.abs(bestScore) < 300) {
+      const RANDOMIZE_THRESHOLD = moveCounter <= 3 ? 20 : 10;
 
-    const candidateMoves: AIMove[] = [];
-    rootMoveScores.forEach((score, key) => {
-      if (Math.abs(score - bestScore) <= RANDOMIZE_THRESHOLD) {
-        const parts = key.split(',');
-        const fr = parseInt(parts[0]), fc = parseInt(parts[1]), tr = parseInt(parts[2]), tc = parseInt(parts[3]);
-        candidateMoves.push({ from: { row: fr, col: fc }, to: { row: tr, col: tc }, score, searchDepth: completedDepth });
+      const candidateMoves: AIMove[] = [];
+      rootMoveScores.forEach((score, key) => {
+        if (Math.abs(score - bestScore) <= RANDOMIZE_THRESHOLD) {
+          const parts = key.split(',');
+          const fr = parseInt(parts[0]), fc = parseInt(parts[1]), tr = parseInt(parts[2]), tc = parseInt(parts[3]);
+          candidateMoves.push({ from: { row: fr, col: fc }, to: { row: tr, col: tc }, score, searchDepth: completedDepth });
+        }
+      });
+
+      if (candidateMoves.length > 1) {
+        const chosen = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+        return chosen;
       }
-    });
-
-    if (candidateMoves.length > 1) {
-      const chosen = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
-      return chosen;
     }
   }
 

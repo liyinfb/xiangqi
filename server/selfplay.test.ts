@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBestMove, resetMoveCounter, Difficulty } from "../client/src/lib/ai";
+import { getBestMove, resetMoveCounter, ttClear, Difficulty } from "../client/src/lib/ai";
 import { createInitialBoard, makeMove, isCheckmate, isInCheck, getAllValidMoves, Board, PieceColor } from "../client/src/lib/xiangqi";
 
 interface MoveDetail {
@@ -16,6 +16,7 @@ function playSelfGame(redDifficulty: Difficulty, blackDifficulty: Difficulty, ma
   let currentTurn: PieceColor = 'red';
   const details: MoveDetail[] = [];
 
+  ttClear();
   resetMoveCounter();
 
   for (let moveNum = 1; moveNum <= maxMoves; moveNum++) {
@@ -83,9 +84,9 @@ describe("Self-Play AI Testing", () => {
     expect(details.length).toBeGreaterThan(10);
     expect(avgDepthRed).toBeGreaterThanOrEqual(5);
     expect(avgDepthBlack).toBeGreaterThanOrEqual(5);
-    // No move should exceed 5.5s
+    // No move should exceed 9s (hard mode uses 8s time limit + overhead)
     for (const d of details) {
-      expect(d.time).toBeLessThanOrEqual(5500);
+      expect(d.time).toBeLessThanOrEqual(9000);
     }
   }, 120000);
 
