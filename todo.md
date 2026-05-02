@@ -56,3 +56,4 @@
 - [x] Increase hard mode thinking time from 5s to 8s
 - [x] Fix persistent AI weakness in hard mode - added repetition detection to prevent aimless shuffling
 - [x] Deep audit and fix search algorithm bugs: NegaMax rewrite + INF bounds fix (JS -Infinity+1===-Infinity bug)
+- [x] Fix AI low-level blunders identified in Test3 saved game (NegaMax+INF fix resolves all Test3 blunders in tests; Vite auto-hashes worker files for cache busting)
