@@ -70,7 +70,8 @@ describe("AI Tactical Regression Tests", () => {
   }, 10000);
 
   it("should not move horse into chariot's attack range", () => {
-    // Black horse at (4,4), Red chariot at (4,8) - same row
+    // Black horse at (4,3), Red chariot at (4,8) - same row
+    // Horse is NOT on column 4, so not pinned by flying general
     const board: Board = Array(10).fill(null).map(() => Array(9).fill(null));
     board[0][4] = { type: 'general', color: 'black' };
     board[0][3] = { type: 'advisor', color: 'black' };
@@ -78,8 +79,9 @@ describe("AI Tactical Regression Tests", () => {
     board[9][4] = { type: 'general', color: 'red' };
     board[9][3] = { type: 'advisor', color: 'red' };
     board[9][5] = { type: 'advisor', color: 'red' };
-    board[4][4] = { type: 'horse', color: 'black' };
+    board[4][3] = { type: 'horse', color: 'black' };
     board[2][1] = { type: 'cannon', color: 'black' };
+    board[1][4] = { type: 'elephant', color: 'black' }; // Block flying general
     board[4][8] = { type: 'chariot', color: 'red' };
     board[7][2] = { type: 'cannon', color: 'red' };
     

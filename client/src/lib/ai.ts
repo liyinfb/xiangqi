@@ -1,8 +1,9 @@
-// AI Engine for Chinese Chess - Maximum Performance
+// AI Engine for Chinese Chess - NegaMax Framework
 // Features: Zobrist Hashing, Transposition Table, Null Move Pruning,
 // Principal Variation Search (PVS), Quiescence Search, Late Move Reduction,
 // Killer Moves, History Heuristic, MVV-LVA, Aspiration Windows, Iterative Deepening
 // All search uses IN-PLACE make/undo to avoid board cloning
+// NegaMax: score is always from the perspective of the CURRENT player to move
 
 import {
   Board,
@@ -34,6 +35,10 @@ const DEPTH_MAP: Record<Difficulty, number> = {
 const FUTILITY_MARGIN = [0, 200, 350, 500, 650, 800, 950];
 // Razoring margin
 const RAZOR_MARGIN = 600;
+
+// Use finite bounds instead of Infinity to avoid JS arithmetic issues
+// (-Infinity + 1 === -Infinity in JS, which breaks null window searches)
+const INF = 300000;
 
 // Time limits per difficulty (ms)
 const TIME_LIMIT: Record<Difficulty, number> = {
@@ -104,8 +109,8 @@ function updateHash(hash: number, fromRow: number, fromCol: number, toRow: numbe
 // ==================== Transposition Table ====================
 
 const TT_EXACT = 0;
-const TT_LOWERBOUND = 1;
-const TT_UPPERBOUND = 2;
+const TT_LOWERBOUND = 1;  // score >= beta (fail high)
+const TT_UPPERBOUND = 2;  // score <= alpha (fail low)
 
 interface TTEntry {
   hash: number;
@@ -185,7 +190,8 @@ function initEvalTables() {
 }
 initEvalTables();
 
-function evaluateBoard(board: Board, aiColor: PieceColor): number {
+// NegaMax evaluation: returns score from the perspective of `currentTurn`
+function evaluateForSide(board: Board, currentTurn: PieceColor): number {
   let score = 0;
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
@@ -194,17 +200,16 @@ function evaluateBoard(board: Board, aiColor: PieceColor): number {
       const value = piece.color === 'red'
         ? EVAL_TABLE_RED[piece.type][row][col]
         : EVAL_TABLE_BLACK[piece.type][row][col];
-      if (piece.color === aiColor) score += value;
+      if (piece.color === currentTurn) score += value;
       else score -= value;
     }
   }
   return score;
 }
 
-function evaluateFull(board: Board, aiColor: PieceColor): number {
-  // Pure material + position evaluation for speed in quiescence search
-  // Check bonuses are handled by the main search (check extensions)
-  return evaluateBoard(board, aiColor);
+// Legacy evaluation for root-level AI color perspective (used in easy mode & describeMoveContext)
+function evaluateBoard(board: Board, aiColor: PieceColor): number {
+  return evaluateForSide(board, aiColor);
 }
 
 // ==================== Move Ordering ====================
@@ -306,7 +311,7 @@ function undoMoveInPlace(board: Board, fromRow: number, fromCol: number, toRow: 
   board[toRow][toCol] = captured;
 }
 
-// ==================== Quiescence Search ====================
+// ==================== Search State ====================
 
 let searchAborted = false;
 let nodesSearched = 0;
@@ -319,49 +324,43 @@ let searchPathHashes: number[] = [];
 
 function isRepetition(hash: number): boolean {
   // Check in game history - need at least 2 occurrences to be a repetition
-  // (the position already appeared once = we've been here before, appearing again = repetition)
   let count = 0;
   for (let i = 0; i < gamePositionHashes.length; i++) {
     if (gamePositionHashes[i] === hash) {
       count++;
-      if (count >= 2) return true; // Three-fold repetition
+      if (count >= 2) return true;
     }
   }
   // Check in current search path - if position appears in the search path,
   // it means we're about to create a cycle
-  for (let i = 0; i < searchPathHashes.length - 1; i++) { // -1 to exclude current position
+  for (let i = 0; i < searchPathHashes.length - 1; i++) {
     if (searchPathHashes[i] === hash) return true;
   }
   return false;
 }
 
+// ==================== Quiescence Search (NegaMax) ====================
+// Returns score from the perspective of `currentTurn`
+
 function quiescence(
   board: Board,
   alpha: number,
   beta: number,
-  aiColor: PieceColor,
   currentTurn: PieceColor,
   hash: number,
   qDepth: number
 ): number {
-  const standPat = evaluateFull(board, aiColor);
+  const standPat = evaluateForSide(board, currentTurn);
 
   if (qDepth <= 0) return standPat;
 
-  const isMax = currentTurn === aiColor;
-
-  if (isMax) {
-    if (standPat >= beta) return beta;
-    if (standPat > alpha) alpha = standPat;
-  } else {
-    if (standPat <= alpha) return alpha;
-    if (standPat < beta) beta = standPat;
-  }
+  if (standPat >= beta) return beta;
+  if (standPat > alpha) alpha = standPat;
 
   // Generate only captures using fast capture generator
   const captureMoves = getCaptureMovesFast(board, currentTurn);
 
-  // Sort by victim value (MVV) - build simple array
+  // Sort by victim value (MVV)
   const captures: { fr: number; fc: number; tr: number; tc: number; vv: number }[] = [];
   for (const m of captureMoves) {
     const victim = board[m.to.row][m.to.col];
@@ -376,37 +375,32 @@ function quiescence(
 
   for (const cap of captures) {
     // Delta pruning
-    if (isMax && standPat + cap.vv + DELTA < alpha) continue;
-    if (!isMax && standPat - cap.vv - DELTA > beta) continue;
+    if (standPat + cap.vv + DELTA < alpha) continue;
 
     const piece = board[cap.fr][cap.fc]!;
     const captured = makeMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc);
     const newHash = updateHash(hash, cap.fr, cap.fc, cap.tr, cap.tc, piece, captured);
 
-    const score = quiescence(board, alpha, beta, aiColor, nextTurn, newHash, qDepth - 1);
+    // NegaMax: negate the score from the opponent's perspective
+    const score = -quiescence(board, -beta, -alpha, nextTurn, newHash, qDepth - 1);
 
     undoMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc, piece, captured);
 
-    if (isMax) {
-      if (score >= beta) return beta;
-      if (score > alpha) alpha = score;
-    } else {
-      if (score <= alpha) return alpha;
-      if (score < beta) beta = score;
-    }
+    if (score >= beta) return beta;
+    if (score > alpha) alpha = score;
   }
 
-  return isMax ? alpha : beta;
+  return alpha;
 }
 
-// ==================== Principal Variation Search ====================
+// ==================== Principal Variation Search (NegaMax) ====================
+// Returns score from the perspective of `currentTurn`
 
 function pvs(
   board: Board,
   depth: number,
   alpha: number,
   beta: number,
-  aiColor: PieceColor,
   currentTurn: PieceColor,
   hash: number,
   ply: number,
@@ -423,13 +417,11 @@ function pvs(
     }
   }
 
-  // Repetition detection - treat repeated positions as draws (score 0)
-  // Use a slight contempt factor: AI prefers to avoid repetition
+  // Repetition detection - treat repeated positions as draws
   if (ply > 0 && isRepetition(hash)) {
-    return 0; // Draw score
+    return 0;
   }
 
-  const isMax = currentTurn === aiColor;
   const inCheck = isInCheckFastExport(board, currentTurn);
 
   // Check extension
@@ -437,7 +429,7 @@ function pvs(
 
   // Leaf node
   if (depth <= 0) {
-    return quiescence(board, alpha, beta, aiColor, currentTurn, hash, 6);
+    return quiescence(board, alpha, beta, currentTurn, hash, 6);
   }
 
   // TT probe
@@ -447,18 +439,18 @@ function pvs(
   }
   const ttMove = ttResult?.bestMove || null;
 
-  // Razoring (only for max nodes to avoid incorrectly pruning opponent's threats)
-  if (!inCheck && depth <= 3 && ply > 0 && isMax) {
-    const staticEval = evaluateBoard(board, aiColor);
+  // Razoring
+  if (!inCheck && depth <= 3 && ply > 0) {
+    const staticEval = evaluateForSide(board, currentTurn);
     if (staticEval + RAZOR_MARGIN < alpha) {
-      const qScore = quiescence(board, alpha, beta, aiColor, currentTurn, hash, 6);
+      const qScore = quiescence(board, alpha, beta, currentTurn, hash, 6);
       if (qScore < alpha) return qScore;
     }
   }
 
   // Null Move Pruning (before move generation to save time on cutoffs)
   if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0) {
-    // Quick material check - scan only major piece positions (chariot, cannon, horse)
+    // Quick material check - need major pieces to avoid zugzwang
     let hasMaterial = false;
     for (let r = 0; r <= 9; r++) {
       for (let c = 0; c <= 8; c++) {
@@ -466,7 +458,7 @@ function pvs(
         if (p && p.color === currentTurn) {
           const t = p.type;
           if (t === 'chariot' || t === 'cannon' || t === 'horse') {
-            hasMaterial = true; r = 10; break; // break both loops
+            hasMaterial = true; r = 10; break;
           }
         }
       }
@@ -477,31 +469,31 @@ function pvs(
       const nextTurn = currentTurn === 'red' ? 'black' : 'red';
       const nullHash = hash ^ ZOBRIST_TURN;
 
-      const nullScore = pvs(board, depth - 1 - R, alpha, beta, aiColor, nextTurn, nullHash, ply + 1, false);
+      // NegaMax: negate the score
+      const nullScore = -pvs(board, depth - 1 - R, -beta, -beta + 1, nextTurn, nullHash, ply + 1, false);
 
       if (searchAborted) return 0;
-      if (isMax && nullScore >= beta) return beta;
-      if (!isMax && nullScore <= alpha) return alpha;
+      if (nullScore >= beta) return beta;
     }
   }
 
   // Generate moves
   const allMoves = getAllValidMovesFast(board, currentTurn);
   if (allMoves.length === 0) {
-    if (inCheck) return isMax ? -200000 + ply : 200000 - ply;
-    return 0;
+    if (inCheck) return -200000 + ply; // Checkmate (bad for current player)
+    return 0; // Stalemate
   }
 
   // Static eval for futility
-  const staticEvalForFutility = (!inCheck && depth <= 6) ? evaluateBoard(board, aiColor) : 0;
+  const staticEvalForFutility = (!inCheck && depth <= 6) ? evaluateForSide(board, currentTurn) : 0;
 
   // Sort moves
   const scoredMoves = generateScoredMoves(board, allMoves, ply, ttMove);
 
   const nextTurn = currentTurn === 'red' ? 'black' : 'red';
-  let bestScore = isMax ? -Infinity : Infinity;
+  let bestScore = -INF;
   let bestFromRow = -1, bestFromCol = -1, bestToRow = -1, bestToCol = -1;
-  let flag = isMax ? TT_UPPERBOUND : TT_LOWERBOUND;
+  let flag = TT_UPPERBOUND; // Assume fail-low until we find a move > alpha
   let movesSearched = 0;
 
   for (let i = 0; i < scoredMoves.length; i++) {
@@ -509,8 +501,8 @@ function pvs(
     const piece = board[sm.fromRow][sm.fromCol]!;
     const captured = board[sm.toRow][sm.toCol];
 
-    // Futility Pruning (only for max nodes - min nodes need all defensive moves)
-    if (!inCheck && depth <= 4 && movesSearched > 0 && !captured && isMax) {
+    // Futility Pruning
+    if (!inCheck && depth <= 4 && movesSearched > 0 && !captured) {
       const margin = FUTILITY_MARGIN[depth] || 950;
       if (staticEvalForFutility + margin < alpha) continue;
     }
@@ -525,7 +517,8 @@ function pvs(
     let score: number;
 
     if (movesSearched === 0) {
-      score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, ply + 1, true);
+      // Full window search for first move
+      score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, ply + 1, true);
     } else {
       // Late Move Reduction
       let reduction = 0;
@@ -537,17 +530,12 @@ function pvs(
         }
       }
 
-      // PVS null window
-      if (isMax) {
-        score = pvs(board, depth - 1 - reduction, alpha, alpha + 1, aiColor, nextTurn, newHash, ply + 1, true);
-        if (!searchAborted && score > alpha && (score < beta || reduction > 0)) {
-          score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, ply + 1, true);
-        }
-      } else {
-        score = pvs(board, depth - 1 - reduction, beta - 1, beta, aiColor, nextTurn, newHash, ply + 1, true);
-        if (!searchAborted && score < beta && (score > alpha || reduction > 0)) {
-          score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, ply + 1, true);
-        }
+      // PVS null window search
+      score = -pvs(board, depth - 1 - reduction, -alpha - 1, -alpha, nextTurn, newHash, ply + 1, true);
+
+      // Re-search with full window if null window failed high
+      if (!searchAborted && score > alpha && (score < beta || reduction > 0)) {
+        score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, ply + 1, true);
       }
     }
 
@@ -561,48 +549,25 @@ function pvs(
 
     movesSearched++;
 
-    if (isMax) {
-      if (score > bestScore) {
-        bestScore = score;
-        bestFromRow = sm.fromRow; bestFromCol = sm.fromCol;
-        bestToRow = sm.toRow; bestToCol = sm.toCol;
+    if (score > bestScore) {
+      bestScore = score;
+      bestFromRow = sm.fromRow; bestFromCol = sm.fromCol;
+      bestToRow = sm.toRow; bestToCol = sm.toCol;
+    }
+
+    if (score > alpha) {
+      alpha = score;
+      flag = TT_EXACT;
+    }
+
+    if (alpha >= beta) {
+      // Beta cutoff
+      if (!captured) {
+        addKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply);
+        historyScores[posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol)] += depth * depth;
       }
-      if (score > alpha) {
-        alpha = score;
-        flag = TT_EXACT;
-      }
-      if (alpha >= beta) {
-        if (!captured) {
-          addKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply);
-          historyScores[posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol)] += depth * depth;
-        }
-        flag = TT_LOWERBOUND;
-        bestScore = beta;
-        bestFromRow = sm.fromRow; bestFromCol = sm.fromCol;
-        bestToRow = sm.toRow; bestToCol = sm.toCol;
-        break;
-      }
-    } else {
-      if (score < bestScore) {
-        bestScore = score;
-        bestFromRow = sm.fromRow; bestFromCol = sm.fromCol;
-        bestToRow = sm.toRow; bestToCol = sm.toCol;
-      }
-      if (score < beta) {
-        beta = score;
-        flag = TT_EXACT;
-      }
-      if (alpha >= beta) {
-        if (!captured) {
-          addKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply);
-          historyScores[posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol)] += depth * depth;
-        }
-        flag = TT_UPPERBOUND;
-        bestScore = alpha;
-        bestFromRow = sm.fromRow; bestFromCol = sm.fromCol;
-        bestToRow = sm.toRow; bestToCol = sm.toCol;
-        break;
-      }
+      flag = TT_LOWERBOUND;
+      break;
     }
   }
 
@@ -673,8 +638,8 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     depthStartTime = Date.now();
 
     // Aspiration window
-    let alpha = -Infinity;
-    let beta = Infinity;
+    let alpha = -INF;
+    let beta = INF;
     if (depth >= 4 && bestMove) {
       alpha = bestMove.score - 50;
       beta = bestMove.score + 50;
@@ -685,7 +650,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     const scoredRootMoves = generateScoredMoves(board, allMoves, 0, ttBest);
 
     let currentBest: AIMove | null = null;
-    let currentBestScore = -Infinity;
+    let currentBestScore = -INF;
 
     for (let i = 0; i < scoredRootMoves.length; i++) {
       const sm = scoredRootMoves[i];
@@ -695,7 +660,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
       const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
-      // Check if this root move leads to a repeated position
+      // Track position in search path for repetition detection
       searchPathHashes.push(newHash);
 
       let score: number;
@@ -703,15 +668,15 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       // Penalize moves that directly repeat a position from game history
       const isDirectRepeat = gamePositionHashes.includes(newHash);
       if (isDirectRepeat) {
-        // This move leads to a position we've seen before - penalize it
         score = -15; // Slight penalty to discourage repetition
       } else if (i === 0) {
-        score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, 1, true);
+        // NegaMax: negate the score from opponent's perspective
+        score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
       } else {
-        // PVS null window search: use alpha (not currentBestScore) for correct bounds
-        score = pvs(board, depth - 1, alpha, alpha + 1, aiColor, nextTurn, newHash, 1, true);
+        // PVS null window search
+        score = -pvs(board, depth - 1, -alpha - 1, -alpha, nextTurn, newHash, 1, true);
         if (!searchAborted && score > alpha && score < beta) {
-          score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, 1, true);
+          score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, 1, true);
         }
       }
 
@@ -738,8 +703,9 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       (currentBest.score <= bestMove.score - 50 || currentBest.score >= bestMove.score + 50)) {
       searchAborted = false;
       nodesSearched = 0;
+      let fullAlpha = -INF;
       let fullBest: AIMove | null = null;
-      let fullBestScore = -Infinity;
+      let fullBestScore = -INF;
 
       for (let i = 0; i < scoredRootMoves.length; i++) {
         const sm = scoredRootMoves[i];
@@ -756,11 +722,11 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         if (isDirectRepeatFull) {
           score = -15;
         } else if (i === 0) {
-          score = pvs(board, depth - 1, -Infinity, Infinity, aiColor, nextTurn, newHash, 1, true);
+          score = -pvs(board, depth - 1, -INF, INF, nextTurn, newHash, 1, true);
         } else {
-          score = pvs(board, depth - 1, fullBestScore, fullBestScore + 1, aiColor, nextTurn, newHash, 1, true);
-          if (!searchAborted && score > fullBestScore && score < Infinity) {
-            score = pvs(board, depth - 1, fullBestScore, Infinity, aiColor, nextTurn, newHash, 1, true);
+          score = -pvs(board, depth - 1, -fullAlpha - 1, -fullAlpha, nextTurn, newHash, 1, true);
+          if (!searchAborted && score > fullAlpha) {
+            score = -pvs(board, depth - 1, -INF, -fullAlpha, nextTurn, newHash, 1, true);
           }
         }
 
@@ -775,6 +741,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         if (score > fullBestScore) {
           fullBestScore = score;
           fullBest = { from: { row: sm.fromRow, col: sm.fromCol }, to: { row: sm.toRow, col: sm.toCol }, score, searchDepth: depth };
+          if (score > fullAlpha) fullAlpha = score;
         }
       }
 
@@ -798,13 +765,11 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     const depthTime = Date.now() - depthStartTime;
     const elapsed = Date.now() - startTime;
     if (depth >= 4) {
-      // Estimate time for next depth based on ratio between this and previous depth
       if (prevDepthTime > 0 && depthTime > 0) {
         const actualBF = depthTime / prevDepthTime;
         const estimatedNext = elapsed + depthTime * Math.min(actualBF, 4);
         if (estimatedNext > timeLimit * 0.9) break;
       } else {
-        // Fallback: use 40% threshold
         if (elapsed > timeLimit * 0.4) break;
       }
     }

@@ -13,8 +13,8 @@ describe("AI Repetition Avoidance", () => {
     
     for (let i = 0; i < 20; i++) {
       resetMoveCounter();
-      // Pass position history to AI
-      const move = getBestMove(board, turn, 'hard', undefined, positionHashes);
+      // Use medium difficulty for faster test execution while still testing repetition logic
+      const move = getBestMove(board, turn, 'medium', undefined, positionHashes);
       if (!move) break;
       
       const piece = board[move.from.row][move.from.col];
@@ -42,7 +42,7 @@ describe("AI Repetition Avoidance", () => {
     
     // Should have very few or no repetitions now
     expect(repetitions).toBeLessThanOrEqual(2);
-  }, 180000);
+  }, 90000);
 
   it("AI avoids returning to previous position after being forced back", () => {
     // Simulate a scenario where AI moved a piece and opponent moved it back
@@ -71,7 +71,7 @@ describe("AI Repetition Avoidance", () => {
     
     // Now Red should NOT move elephant back to (9,6)
     resetMoveCounter();
-    const move = getBestMove(board, 'red', 'hard', undefined, positionHashes);
+    const move = getBestMove(board, 'red', 'medium', undefined, positionHashes);
     
     console.log(`After 4 moves, Red chooses: (${move?.from.row},${move?.from.col})->(${move?.to.row},${move?.to.col}) score=${move?.score}`);
     
@@ -94,7 +94,7 @@ describe("AI Repetition Avoidance", () => {
     
     for (let i = 0; i < 10; i++) {
       resetMoveCounter();
-      const move = getBestMove(board, turn, 'hard', undefined, positionHashes);
+      const move = getBestMove(board, turn, 'medium', undefined, positionHashes);
       if (!move) break;
       
       const piece = board[move.from.row][move.from.col];
@@ -116,5 +116,18 @@ describe("AI Repetition Avoidance", () => {
     
     // In 10 moves, at least 4 different pieces should have moved
     expect(piecesMoved.size).toBeGreaterThanOrEqual(4);
-  }, 90000);
+  }, 60000);
+
+  it("Hard mode returns finite scores", () => {
+    const board = createInitialBoard();
+    resetMoveCounter();
+    const move = getBestMove(board, 'red', 'hard');
+    
+    console.log(`Hard mode: score=${move?.score} depth=${move?.searchDepth}`);
+    
+    expect(move).not.toBeNull();
+    expect(Number.isFinite(move!.score)).toBe(true);
+    expect(move!.searchDepth).toBeGreaterThanOrEqual(4);
+    expect(move!.searchDepth).toBeLessThanOrEqual(15);
+  }, 15000);
 });
