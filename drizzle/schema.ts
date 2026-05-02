@@ -25,4 +25,21 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+/**
+ * Saved games table for persisting game state.
+ */
+export const savedGames = mysqlTable("savedGames", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  gameState: text("gameState").notNull(),
+  moveCount: int("moveCount").notNull().default(0),
+  difficulty: varchar("difficulty", { length: 20 }).notNull().default("medium"),
+  playerColor: varchar("playerColor", { length: 10 }).notNull().default("red"),
+  status: varchar("status", { length: 20 }).notNull().default("playing"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SavedGame = typeof savedGames.$inferSelect;
+export type InsertSavedGame = typeof savedGames.$inferInsert;

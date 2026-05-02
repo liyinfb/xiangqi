@@ -32,6 +32,7 @@ export interface AIThinkingProgress {
 export interface GameState {
   board: Board;
   currentTurn: PieceColor;
+  playerColor: PieceColor;
   selectedPosition: Position | null;
   validMoves: Position[];
   moveHistory: Move[];
@@ -49,6 +50,7 @@ export interface GameState {
 export function useGameState() {
   const [board, setBoard] = useState<Board>(createInitialBoard());
   const [currentTurn, setCurrentTurn] = useState<PieceColor>('red');
+  const [playerColor, setPlayerColor] = useState<PieceColor>('red');
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
   const [validMoves, setValidMoves] = useState<Position[]>([]);
   const [moveHistory, setMoveHistory] = useState<Move[]>([]);
@@ -68,6 +70,9 @@ export function useGameState() {
   // AI thinking progress state
   const [aiThinkingProgress, setAiThinkingProgress] = useState<AIThinkingProgress | null>(null);
 
+  // Replay state: null = live mode, number = viewing historical step
+  const [replayIndex, setReplayIndex] = useState<number | null>(null);
+
   // Use ref to track board history for undo
   const boardHistory = useRef<Board[]>([createInitialBoard()]);
   const turnHistory = useRef<PieceColor[]>(['red']);
@@ -79,13 +84,20 @@ export function useGameState() {
   const isNewGameRef = useRef(true);
   const aiExplanationEnabledRef = useRef(aiExplanationEnabled);
   const difficultyRef = useRef(difficulty);
+  const playerColorRef = useRef(playerColor);
   const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const thinkingStartRef = useRef<number>(0);
   const moveHistoryRef = useRef<{ from: Position; to: Position }[]>([]);
+  const soundEnabledRef = useRef(soundEnabled);
 
   // Keep refs in sync with state
   aiExplanationEnabledRef.current = aiExplanationEnabled;
   difficultyRef.current = difficulty;
+  playerColorRef.current = playerColor;
+  soundEnabledRef.current = soundEnabled;
+
+  // Derive AI color from player color
+  const aiColor: PieceColor = playerColor === 'red' ? 'black' : 'red';
 
   // Initialize Web Worker
   useEffect(() => {
@@ -136,11 +148,15 @@ export function useGameState() {
   }, []);
 
   const handleAIResponseFromWorker = useCallback((currentBoard: Board, aiMove: AIMove | null) => {
+    const currentAiColor = playerColorRef.current === 'red' ? 'black' : 'red';
+    const currentPlayerColor = playerColorRef.current;
+
     if (!aiMove) {
-      setStatus('red_wins');
+      // AI has no valid moves - player wins
+      setStatus(currentPlayerColor === 'red' ? 'red_wins' : 'black_wins');
       setAiThinking(false);
       setAiThinkingProgress(null);
-      if (soundEnabled) playGameOverSound();
+      if (soundEnabledRef.current) playGameOverSound();
       return;
     }
 
@@ -165,12 +181,12 @@ export function useGameState() {
     if (captured) {
       setCapturedPieces(prev => ({
         ...prev,
-        black: [...prev.black, captured],
+        [currentAiColor]: [...prev[currentAiColor], captured],
       }));
     }
 
     // Play sound
-    if (soundEnabled) {
+    if (soundEnabledRef.current) {
       if (captured) {
         playCaptureSound();
       } else {
@@ -180,25 +196,25 @@ export function useGameState() {
 
     // Save to history for undo
     boardHistory.current.push(newBoard);
-    turnHistory.current.push('red');
+    turnHistory.current.push(currentPlayerColor);
 
     // Check game status
-    if (isCheckmate(newBoard, 'red')) {
-      setStatus('black_wins');
-      setCurrentTurn('red');
+    if (isCheckmate(newBoard, currentPlayerColor)) {
+      setStatus(currentAiColor === 'red' ? 'red_wins' : 'black_wins');
+      setCurrentTurn(currentPlayerColor);
       setCheckState(false);
       setAiThinking(false);
       setAiThinkingProgress(null);
-      if (soundEnabled) playGameOverSound();
+      if (soundEnabledRef.current) playGameOverSound();
       return;
     }
 
-    const inCheck = isInCheck(newBoard, 'red');
+    const inCheck = isInCheck(newBoard, currentPlayerColor);
     setCheckState(inCheck);
-    if (inCheck && soundEnabled) {
+    if (inCheck && soundEnabledRef.current) {
       playCheckSound();
     }
-    setCurrentTurn('red');
+    setCurrentTurn(currentPlayerColor);
     setAiThinking(false);
     setAiThinkingProgress(null);
 
@@ -210,15 +226,20 @@ export function useGameState() {
     if (aiExplanationEnabledRef.current) {
       fetchAIExplanation(currentBoard, aiMove.from, aiMove.to, aiMove.searchDepth, aiMove.score);
     }
-  }, [soundEnabled]);
+  }, []);
 
   const handleCellClick = useCallback((row: number, col: number) => {
-    if (status !== 'playing' || currentTurn !== 'red' || aiThinking) return;
+    // Exit replay mode when player interacts with the board
+    if (replayIndex !== null) {
+      setReplayIndex(null);
+      return;
+    }
+    if (status !== 'playing' || currentTurn !== playerColor || aiThinking) return;
 
     const clickedPiece = board[row][col];
 
     // If clicking own piece, select it
-    if (clickedPiece && clickedPiece.color === 'red') {
+    if (clickedPiece && clickedPiece.color === playerColor) {
       setSelectedPosition({ row, col });
       const moves = getValidMoves(board, { row, col });
       setValidMoves(moves);
@@ -235,12 +256,13 @@ export function useGameState() {
         setValidMoves([]);
       }
     }
-  }, [board, currentTurn, selectedPosition, validMoves, status, aiThinking]);
+  }, [board, currentTurn, playerColor, selectedPosition, validMoves, status, aiThinking]);
 
   const executeMove = useCallback((from: Position, to: Position) => {
     const piece = board[from.row][from.col];
     if (!piece) return;
 
+    const currentAiColor = playerColor === 'red' ? 'black' : 'red';
     const { newBoard, captured } = makeMove(board, from, to);
 
     const move: Move = { from, to, piece, captured: captured || undefined };
@@ -273,49 +295,51 @@ export function useGameState() {
 
     // Save to history for undo
     boardHistory.current.push(newBoard);
-    turnHistory.current.push('black');
+    turnHistory.current.push(currentAiColor);
 
     // Check game status
-    if (isCheckmate(newBoard, 'black')) {
-      setStatus('red_wins');
-      setCurrentTurn('black');
+    if (isCheckmate(newBoard, currentAiColor)) {
+      setStatus(playerColor === 'red' ? 'red_wins' : 'black_wins');
+      setCurrentTurn(currentAiColor);
       setCheckState(false);
       if (soundEnabled) playGameOverSound();
       return;
     }
 
-    const inCheck = isInCheck(newBoard, 'black');
+    const inCheck = isInCheck(newBoard, currentAiColor);
     setCheckState(inCheck);
     if (inCheck && soundEnabled) {
       playCheckSound();
     }
-    setCurrentTurn('black');
+    setCurrentTurn(currentAiColor);
 
     // Trigger AI move
     setTimeout(() => {
       makeAIMove(newBoard);
     }, 200);
-  }, [board, difficulty, aiExplanationEnabled, soundEnabled]);
+  }, [board, playerColor, difficulty, aiExplanationEnabled, soundEnabled]);
 
   const makeAIMove = useCallback((currentBoard: Board) => {
+    const currentAiColor = playerColorRef.current === 'red' ? 'black' : 'red';
+    
     setAiThinking(true);
     pendingBoardRef.current = currentBoard;
     requestIdRef.current++;
     const currentRequestId = requestIdRef.current;
 
     // Check opening book first
-    const bookMove = lookupOpeningBook(moveHistoryRef.current, 'black');
+    const bookMove = lookupOpeningBook(moveHistoryRef.current, currentAiColor);
     if (bookMove) {
       // Verify the book move is valid on the current board
       const piece = currentBoard[bookMove.from.row][bookMove.from.col];
-      if (piece && piece.color === 'black') {
+      if (piece && piece.color === currentAiColor) {
         setAiThinkingProgress({
           currentDepth: 0,
           timeElapsed: 0,
           isFromBook: true,
           openingName: bookMove.name,
         });
-        
+   
         // Simulate brief thinking time for natural feel
         setTimeout(() => {
           if (requestIdRef.current !== currentRequestId) return;
@@ -364,7 +388,7 @@ export function useGameState() {
     if (workerRef.current) {
       const request = {
         board: currentBoard,
-        aiColor: 'black' as const,
+        aiColor: currentAiColor,
         difficulty: difficultyRef.current,
         requestId: currentRequestId,
         isNewGame: isNewGameRef.current,
@@ -375,7 +399,7 @@ export function useGameState() {
       // Fallback: run in main thread if worker not available
       import('../lib/ai').then(({ getBestMove }) => {
         if (requestIdRef.current !== currentRequestId) return;
-        const aiMove = getBestMove(currentBoard, 'black', difficultyRef.current);
+        const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current);
         if (thinkingTimerRef.current) {
           clearInterval(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
@@ -398,18 +422,23 @@ export function useGameState() {
 
   const fetchAIExplanation = useCallback((boardState: Board, from: Position, to: Position, searchDepth: number, score: number) => {
     setAiExplanationLoading(true);
-    const context = describeMoveContext(boardState, from, to, 'black');
+    const currentAiColor = playerColorRef.current === 'red' ? 'black' : 'red';
+    const context = describeMoveContext(boardState, from, to, currentAiColor);
     const difficultyLabel = difficulty === 'easy' ? '简单' : difficulty === 'medium' ? '中等' : '困难';
     explainMutation.mutate({ context, searchDepth, score, difficulty: difficultyLabel });
   }, [explainMutation, difficulty]);
 
-  const newGame = useCallback(() => {
+  const newGame = useCallback((color?: PieceColor) => {
     requestIdRef.current++; // Invalidate any pending AI response
     isNewGameRef.current = true; // Signal worker to reset move counter
     if (thinkingTimerRef.current) {
       clearInterval(thinkingTimerRef.current);
       thinkingTimerRef.current = null;
     }
+    const newPlayerColor = color ?? playerColor;
+    setPlayerColor(newPlayerColor);
+    playerColorRef.current = newPlayerColor;
+    
     const initialBoard = createInitialBoard();
     setBoard(initialBoard);
     setCurrentTurn('red');
@@ -426,10 +455,18 @@ export function useGameState() {
     setAiScore(null);
     setLastMove(null);
     setAiThinkingProgress(null);
+    setReplayIndex(null);
     boardHistory.current = [initialBoard];
     turnHistory.current = ['red'];
     if (soundEnabled) playNewGameSound();
-  }, [soundEnabled]);
+
+    // If player is black, AI (red) moves first
+    if (newPlayerColor === 'black') {
+      setTimeout(() => {
+        makeAIMove(initialBoard);
+      }, 500);
+    }
+  }, [playerColor, soundEnabled, makeAIMove]);
 
   const undoMove = useCallback(() => {
     if (moveHistory.length < 2 || aiThinking) return; // Undo both player and AI move
@@ -455,6 +492,7 @@ export function useGameState() {
     setAiScore(null);
     setLastMove(newHistory.length > 0 ? { from: newHistory[newHistory.length - 1].from, to: newHistory[newHistory.length - 1].to } : null);
     setAiThinkingProgress(null);
+    setReplayIndex(null);
 
     boardHistory.current = newBoardHistory;
     turnHistory.current = newTurnHistory;
@@ -477,13 +515,128 @@ export function useGameState() {
     setSoundEnabled(prev => !prev);
   }, []);
 
+  // Replay navigation functions
+  const replayGoTo = useCallback((index: number) => {
+    const maxIndex = boardHistory.current.length - 1;
+    if (index < 0 || index > maxIndex) return;
+    setReplayIndex(index);
+  }, []);
+
+  const replayGoFirst = useCallback(() => {
+    setReplayIndex(0);
+  }, []);
+
+  const replayGoPrev = useCallback(() => {
+    setReplayIndex(prev => {
+      if (prev === null) return boardHistory.current.length - 2;
+      return Math.max(0, prev - 1);
+    });
+  }, []);
+
+  const replayGoNext = useCallback(() => {
+    setReplayIndex(prev => {
+      if (prev === null) return null;
+      const maxIndex = boardHistory.current.length - 1;
+      if (prev >= maxIndex) return null; // Return to live
+      return prev + 1;
+    });
+  }, []);
+
+  const replayGoLast = useCallback(() => {
+    setReplayIndex(null); // Back to live
+  }, []);
+
+  // Get the board and lastMove for the current replay position
+  const replayBoard = replayIndex !== null ? boardHistory.current[replayIndex] : null;
+  const replayLastMove = replayIndex !== null && replayIndex > 0 && moveHistory.length >= replayIndex
+    ? { from: moveHistory[replayIndex - 1].from, to: moveHistory[replayIndex - 1].to }
+    : null;
+
   const changeDifficulty = useCallback((d: Difficulty) => {
     setDifficulty(d);
   }, []);
 
+  // Serialize game state for saving
+  const serializeGameState = useCallback(() => {
+    return JSON.stringify({
+      board,
+      currentTurn,
+      playerColor,
+      moveHistory: moveHistory.map(m => ({
+        from: m.from,
+        to: m.to,
+        piece: m.piece,
+        captured: m.captured || null,
+      })),
+      capturedPieces,
+      status,
+      difficulty,
+      lastMove,
+    });
+  }, [board, currentTurn, playerColor, moveHistory, capturedPieces, status, difficulty, lastMove]);
+
+  // Load game state from serialized data
+  const loadGameState = useCallback((serialized: string) => {
+    try {
+      const data = JSON.parse(serialized);
+      requestIdRef.current++; // Invalidate any pending AI response
+      isNewGameRef.current = true;
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+        thinkingTimerRef.current = null;
+      }
+
+      setBoard(data.board);
+      setCurrentTurn(data.currentTurn);
+      setPlayerColor(data.playerColor || 'red');
+      playerColorRef.current = data.playerColor || 'red';
+      setMoveHistory(data.moveHistory || []);
+      moveHistoryRef.current = (data.moveHistory || []).map((m: Move) => ({ from: m.from, to: m.to }));
+      setCapturedPieces(data.capturedPieces || { red: [], black: [] });
+      setStatus(data.status || 'playing');
+      setDifficulty(data.difficulty || 'medium');
+      setLastMove(data.lastMove || null);
+      setSelectedPosition(null);
+      setValidMoves([]);
+      setCheckState(isInCheck(data.board, data.currentTurn));
+      setAiThinking(false);
+      setAiExplanation('');
+      setAiSearchDepth(null);
+      setAiScore(null);
+      setAiThinkingProgress(null);
+      setReplayIndex(null);
+
+      // Rebuild board history
+      boardHistory.current = [createInitialBoard()];
+      turnHistory.current = ['red'];
+      let tempBoard = createInitialBoard();
+      for (const move of (data.moveHistory || [])) {
+        const { newBoard } = makeMove(tempBoard, move.from, move.to);
+        tempBoard = newBoard;
+        boardHistory.current.push(newBoard);
+        const nextTurn: PieceColor = turnHistory.current[turnHistory.current.length - 1] === 'red' ? 'black' : 'red';
+        turnHistory.current.push(nextTurn);
+      }
+
+      // If it's AI's turn after loading, trigger AI move
+      const loadedPlayerColor = data.playerColor || 'red';
+      if (data.status === 'playing' && data.currentTurn !== loadedPlayerColor) {
+        setTimeout(() => {
+          makeAIMove(data.board);
+        }, 500);
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Failed to load game state:', e);
+      return false;
+    }
+  }, [makeAIMove]);
+
   return {
     board,
     currentTurn,
+    playerColor,
     selectedPosition,
     validMoves,
     moveHistory,
@@ -507,5 +660,16 @@ export function useGameState() {
     toggleSound,
     changeDifficulty,
     setDifficulty: changeDifficulty,
+    serializeGameState,
+    loadGameState,
+    // Replay
+    replayIndex,
+    replayBoard,
+    replayLastMove,
+    replayGoTo,
+    replayGoFirst,
+    replayGoPrev,
+    replayGoNext,
+    replayGoLast,
   };
 }

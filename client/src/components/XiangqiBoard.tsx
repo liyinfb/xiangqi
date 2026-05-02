@@ -8,6 +8,7 @@ interface XiangqiBoardProps {
   lastMove: { from: Position; to: Position } | null;
   onCellClick: (row: number, col: number) => void;
   currentTurn: PieceColor;
+  playerColor: PieceColor;
   disabled?: boolean;
 }
 
@@ -18,6 +19,7 @@ export default function XiangqiBoard({
   lastMove,
   onCellClick,
   currentTurn,
+  playerColor,
   disabled = false,
 }: XiangqiBoardProps) {
   const cellSize = 64;
@@ -26,6 +28,19 @@ export default function XiangqiBoard({
   const boardHeight = 9 * cellSize;
   const svgWidth = boardWidth + padding * 2;
   const svgHeight = boardHeight + padding * 2;
+
+  // When playing as black, flip the board so black is at bottom
+  const flipped = playerColor === 'black';
+
+  // Convert logical row/col to visual coordinates
+  const toVisualX = (col: number) => {
+    const visualCol = flipped ? 8 - col : col;
+    return padding + visualCol * cellSize;
+  };
+  const toVisualY = (row: number) => {
+    const visualRow = flipped ? 9 - row : row;
+    return padding + visualRow * cellSize;
+  };
 
   const isSelected = (row: number, col: number) =>
     selectedPosition?.row === row && selectedPosition?.col === col;
@@ -59,7 +74,6 @@ export default function XiangqiBoard({
     // Vertical lines (with river gap)
     for (let col = 0; col <= 8; col++) {
       if (col === 0 || col === 8) {
-        // Edge columns go full length
         lines.push(
           <line
             key={`v-${col}`}
@@ -72,7 +86,6 @@ export default function XiangqiBoard({
           />
         );
       } else {
-        // Inner columns have river gap
         lines.push(
           <line
             key={`v-${col}-top`}
@@ -98,13 +111,11 @@ export default function XiangqiBoard({
       }
     }
 
-    // Palace diagonals
-    // Top palace
+    // Palace diagonals (visual positions, always same on screen)
     lines.push(
       <line key="palace-top-1" x1={padding + 3 * cellSize} y1={padding} x2={padding + 5 * cellSize} y2={padding + 2 * cellSize} stroke="#5c3d2e" strokeWidth="1" />,
       <line key="palace-top-2" x1={padding + 5 * cellSize} y1={padding} x2={padding + 3 * cellSize} y2={padding + 2 * cellSize} stroke="#5c3d2e" strokeWidth="1" />
     );
-    // Bottom palace
     lines.push(
       <line key="palace-bot-1" x1={padding + 3 * cellSize} y1={padding + 7 * cellSize} x2={padding + 5 * cellSize} y2={padding + 9 * cellSize} stroke="#5c3d2e" strokeWidth="1" />,
       <line key="palace-bot-2" x1={padding + 5 * cellSize} y1={padding + 7 * cellSize} x2={padding + 3 * cellSize} y2={padding + 9 * cellSize} stroke="#5c3d2e" strokeWidth="1" />
@@ -113,34 +124,38 @@ export default function XiangqiBoard({
     return lines;
   };
 
-  // River text
-  const renderRiver = () => (
-    <g>
-      <text
-        x={padding + 1.5 * cellSize}
-        y={padding + 4.55 * cellSize}
-        textAnchor="middle"
-        className="select-none"
-        style={{ fontSize: '22px', fill: '#5c3d2e', fontFamily: 'serif', letterSpacing: '8px' }}
-      >
-        楚河
-      </text>
-      <text
-        x={padding + 6.5 * cellSize}
-        y={padding + 4.55 * cellSize}
-        textAnchor="middle"
-        className="select-none"
-        style={{ fontSize: '22px', fill: '#5c3d2e', fontFamily: 'serif', letterSpacing: '8px' }}
-      >
-        漢界
-      </text>
-    </g>
-  );
+  // River text - flipped when playing as black
+  const renderRiver = () => {
+    const leftText = flipped ? '漢界' : '楚河';
+    const rightText = flipped ? '楚河' : '漢界';
+    return (
+      <g>
+        <text
+          x={padding + 1.5 * cellSize}
+          y={padding + 4.55 * cellSize}
+          textAnchor="middle"
+          className="select-none"
+          style={{ fontSize: '22px', fill: '#5c3d2e', fontFamily: 'serif', letterSpacing: '8px' }}
+        >
+          {leftText}
+        </text>
+        <text
+          x={padding + 6.5 * cellSize}
+          y={padding + 4.55 * cellSize}
+          textAnchor="middle"
+          className="select-none"
+          style={{ fontSize: '22px', fill: '#5c3d2e', fontFamily: 'serif', letterSpacing: '8px' }}
+        >
+          {rightText}
+        </text>
+      </g>
+    );
+  };
 
   // Render a piece
   const renderPiece = (piece: Piece, row: number, col: number) => {
-    const x = padding + col * cellSize;
-    const y = padding + row * cellSize;
+    const x = toVisualX(col);
+    const y = toVisualY(row);
     const selected = isSelected(row, col);
     const char = PIECE_CHARS[piece.color][piece.type];
 
@@ -197,8 +212,8 @@ export default function XiangqiBoard({
   // Render valid move indicators
   const renderValidMoves = () => {
     return validMoves.map(({ row, col }) => {
-      const x = padding + col * cellSize;
-      const y = padding + row * cellSize;
+      const x = toVisualX(col);
+      const y = toVisualY(row);
       const hasCapture = board[row][col] !== null;
 
       if (hasCapture) {
@@ -237,8 +252,8 @@ export default function XiangqiBoard({
     if (!lastMove) return null;
     const highlights = [lastMove.from, lastMove.to];
     return highlights.map(({ row, col }) => {
-      const x = padding + col * cellSize;
-      const y = padding + row * cellSize;
+      const x = toVisualX(col);
+      const y = toVisualY(row);
       return (
         <rect
           key={`last-${row}-${col}`}
@@ -259,8 +274,8 @@ export default function XiangqiBoard({
     for (let row = 0; row <= 9; row++) {
       for (let col = 0; col <= 8; col++) {
         if (!board[row][col]) {
-          const x = padding + col * cellSize;
-          const y = padding + row * cellSize;
+          const x = toVisualX(col);
+          const y = toVisualY(row);
           targets.push(
             <circle
               key={`target-${row}-${col}`}

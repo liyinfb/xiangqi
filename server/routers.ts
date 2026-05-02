@@ -1,9 +1,12 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { z } from "zod";
+import { getDb } from "./db";
+import { savedGames } from "../drizzle/schema";
+import { eq, and, desc } from "drizzle-orm";
 
 export const appRouter = router({
   system: systemRouter,
@@ -66,6 +69,87 @@ ${input.context}
           console.error("LLM explanation error:", error);
           return "暂时无法生成解说，请稍后再试。";
         }
+      }),
+
+    // Save a game
+    saveGame: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).max(255),
+        gameState: z.string(),
+        moveCount: z.number(),
+        difficulty: z.string(),
+        playerColor: z.string(),
+        status: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("数据库不可用");
+
+        await db.insert(savedGames).values({
+          userId: ctx.user.id,
+          name: input.name,
+          gameState: input.gameState,
+          moveCount: input.moveCount,
+          difficulty: input.difficulty,
+          playerColor: input.playerColor,
+          status: input.status,
+        });
+
+        return { success: true };
+      }),
+
+    // List saved games for current user
+    listSavedGames: protectedProcedure
+      .query(async ({ ctx }) => {
+        const db = await getDb();
+        if (!db) return [];
+
+        const games = await db
+          .select()
+          .from(savedGames)
+          .where(eq(savedGames.userId, ctx.user.id))
+          .orderBy(desc(savedGames.updatedAt))
+          .limit(20);
+
+        return games;
+      }),
+
+    // Load a specific saved game
+    loadGame: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("数据库不可用");
+
+        const results = await db
+          .select()
+          .from(savedGames)
+          .where(and(
+            eq(savedGames.id, input.id),
+            eq(savedGames.userId, ctx.user.id),
+          ))
+          .limit(1);
+
+        if (results.length === 0) throw new Error("存档不存在");
+
+        return results[0];
+      }),
+
+    // Delete a saved game
+    deleteGame: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("数据库不可用");
+
+        await db
+          .delete(savedGames)
+          .where(and(
+            eq(savedGames.id, input.id),
+            eq(savedGames.userId, ctx.user.id),
+          ));
+
+        return { success: true };
       }),
   }),
 });

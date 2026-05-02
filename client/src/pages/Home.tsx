@@ -5,6 +5,13 @@ import GameInfoPanel from '@/components/GameInfoPanel';
 export default function Home() {
   const game = useGameState();
 
+  const isPlayerTurn = game.currentTurn === game.playerColor;
+  const isReplaying = game.replayIndex !== null;
+
+  // When replaying, show the historical board; otherwise show the live board
+  const displayBoard = isReplaying && game.replayBoard ? game.replayBoard : game.board;
+  const displayLastMove = isReplaying ? game.replayLastMove : game.lastMove;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-stone-100 via-amber-50 to-stone-100">
       {/* Header */}
@@ -27,15 +34,22 @@ export default function Home() {
         <div className="flex flex-col lg:flex-row items-start justify-center gap-8 max-w-6xl mx-auto">
           {/* Board Section */}
           <div className="flex-shrink-0 w-full lg:w-auto">
-            <div className="bg-white rounded-xl shadow-lg p-4 border border-stone-200">
+            <div className={`bg-white rounded-xl shadow-lg p-4 border ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
+              {isReplaying && (
+                <div className="text-center text-sm text-blue-600 font-medium mb-2">
+                  回放模式 · 第 {game.replayIndex} / {game.moveHistory.length} 步
+                  <span className="text-xs text-blue-400 ml-2">（点击棋盘返回对弈）</span>
+                </div>
+              )}
               <XiangqiBoard
-                board={game.board}
-                selectedPosition={game.selectedPosition}
-                validMoves={game.validMoves}
-                lastMove={game.lastMove}
+                board={displayBoard}
+                selectedPosition={isReplaying ? null : game.selectedPosition}
+                validMoves={isReplaying ? [] : game.validMoves}
+                lastMove={displayLastMove}
                 onCellClick={game.handleCellClick}
                 currentTurn={game.currentTurn}
-                disabled={game.status !== 'playing' || game.currentTurn !== 'red' || game.aiThinking}
+                playerColor={game.playerColor}
+                disabled={!isReplaying && (game.status !== 'playing' || !isPlayerTurn || game.aiThinking)}
               />
             </div>
           </div>
@@ -47,6 +61,7 @@ export default function Home() {
               capturedPieces={game.capturedPieces}
               status={game.status}
               currentTurn={game.currentTurn}
+              playerColor={game.playerColor}
               isInCheck={game.isInCheck}
               difficulty={game.difficulty}
               aiThinking={game.aiThinking}
@@ -62,6 +77,15 @@ export default function Home() {
               onToggleExplanation={game.toggleAiExplanation}
               onToggleSound={game.toggleSound}
               onChangeDifficulty={game.changeDifficulty}
+              serializeGameState={game.serializeGameState}
+              loadGameState={game.loadGameState}
+              replayIndex={game.replayIndex}
+              totalMoves={game.moveHistory.length}
+              onReplayGoTo={game.replayGoTo}
+              onReplayGoFirst={game.replayGoFirst}
+              onReplayGoPrev={game.replayGoPrev}
+              onReplayGoNext={game.replayGoNext}
+              onReplayGoLast={game.replayGoLast}
             />
           </div>
         </div>
@@ -70,7 +94,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-stone-200 bg-white/60 py-4 mt-8">
         <div className="container text-center text-sm text-stone-500">
-          您执红棋先行，点击棋子查看可走位置
+          {game.playerColor === 'red' ? '您执红棋先行' : '您执黑棋，电脑先行'}，点击棋子查看可走位置
         </div>
       </footer>
     </div>

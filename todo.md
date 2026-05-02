@@ -44,3 +44,11 @@
 - [x] Add opening book with classic Chinese Chess openings (中炮、飞相、仙人指路等)
 - [x] Display AI thinking progress (real-time depth, nodes, NPS from worker, progress bar)
 - [x] Add sound effects (move, capture, check, game over, new game) using Web Audio API
+- [x] Support playing as Black (AI moves first as Red)
+- [x] Player color selection UI in game controls
+- [x] Board orientation flips when playing as Black
+- [x] Save game to database (requires login)
+- [x] Load saved games from database
+- [x] Game save/load UI with list of saved games
+- [x] Resume game from saved state (including AI turn detection)
+- [x] Add step-by-step replay controls for saved game history

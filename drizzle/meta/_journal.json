@@ -8,6 +8,13 @@
       "when": 1777641774294,
       "tag": "0000_tiny_union_jack",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1777711292293,
+      "tag": "0001_slim_namor",
+      "breakpoints": true
     }
   ]
 }
