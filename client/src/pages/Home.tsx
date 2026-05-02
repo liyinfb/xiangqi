@@ -55,9 +55,12 @@ export default function Home() {
               aiExplanationLoading={game.aiExplanationLoading}
               aiSearchDepth={game.aiSearchDepth}
               aiScore={game.aiScore}
+              soundEnabled={game.soundEnabled}
+              aiThinkingProgress={game.aiThinkingProgress}
               onNewGame={game.newGame}
               onUndo={game.undoMove}
               onToggleExplanation={game.toggleAiExplanation}
+              onToggleSound={game.toggleSound}
               onChangeDifficulty={game.changeDifficulty}
             />
           </div>

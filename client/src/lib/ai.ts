@@ -593,7 +593,9 @@ export interface AIMove {
   nodesSearched?: number;
 }
 
-export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty): AIMove | null {
+export type ProgressCallback = (depth: number, nodes: number, elapsed: number) => void;
+
+export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty, onProgress?: ProgressCallback): AIMove | null {
   const maxDepth = DEPTH_MAP[difficulty];
   timeLimit = TIME_LIMIT[difficulty];
   startTime = Date.now();
@@ -735,6 +737,11 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       completedDepth = depth;
     }
     totalNodesSearched += nodesSearched;
+
+    // Report progress after each completed depth
+    if (onProgress && !searchAborted) {
+      onProgress(completedDepth, totalNodesSearched, Date.now() - startTime);
+    }
 
     // Adaptive time management based on actual branching factor
     const depthTime = Date.now() - depthStartTime;

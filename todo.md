@@ -41,3 +41,6 @@
 - [x] Create self-play test framework (AI vs AI at different difficulty levels)
 - [x] Analyze self-play performance metrics (nodes/second, depth reached, game length)
 - [x] Optimize algorithm efficiency based on self-play findings (general position tracking, NMP before move gen, adaptive time management)
+- [x] Add opening book with classic Chinese Chess openings (中炮、飞相、仙人指路等)
+- [x] Display AI thinking progress (real-time depth, nodes, NPS from worker, progress bar)
+- [x] Add sound effects (move, capture, check, game over, new game) using Web Audio API

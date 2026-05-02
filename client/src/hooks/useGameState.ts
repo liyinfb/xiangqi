@@ -15,9 +15,19 @@ import {
   PIECE_CHARS,
 } from '@/lib/xiangqi';
 import { Difficulty, describeMoveContext, AIMove } from '@/lib/ai';
+import { lookupOpeningBook, getOpeningName } from '@/lib/openingBook';
+import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound, playNewGameSound } from '@/lib/sounds';
 import type { AIWorkerRequest, AIWorkerResponse } from '@/lib/ai.worker';
 
 export type GameStatus = 'playing' | 'red_wins' | 'black_wins' | 'stalemate';
+
+export interface AIThinkingProgress {
+  currentDepth: number;
+  timeElapsed: number;
+  nodesSearched?: number;
+  isFromBook: boolean;
+  openingName?: string;
+}
 
 export interface GameState {
   board: Board;
@@ -53,6 +63,10 @@ export function useGameState() {
   const [aiSearchDepth, setAiSearchDepth] = useState<number | null>(null);
   const [aiScore, setAiScore] = useState<number | null>(null);
   const [lastMove, setLastMove] = useState<{ from: Position; to: Position } | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  
+  // AI thinking progress state
+  const [aiThinkingProgress, setAiThinkingProgress] = useState<AIThinkingProgress | null>(null);
 
   // Use ref to track board history for undo
   const boardHistory = useRef<Board[]>([createInitialBoard()]);
@@ -65,6 +79,9 @@ export function useGameState() {
   const isNewGameRef = useRef(true);
   const aiExplanationEnabledRef = useRef(aiExplanationEnabled);
   const difficultyRef = useRef(difficulty);
+  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const thinkingStartRef = useRef<number>(0);
+  const moveHistoryRef = useRef<{ from: Position; to: Position }[]>([]);
 
   // Keep refs in sync with state
   aiExplanationEnabledRef.current = aiExplanationEnabled;
@@ -78,19 +95,43 @@ export function useGameState() {
     );
     workerRef.current = worker;
 
-    worker.onmessage = (e: MessageEvent<AIWorkerResponse & { requestId?: number }>) => {
-      const { move: aiMove, requestId } = e.data as any;
+    worker.onmessage = (e: MessageEvent<any>) => {
+      const data = e.data;
+      
+      // Handle progress updates
+      if (data.type === 'progress') {
+        if (data.requestId !== undefined && data.requestId !== requestIdRef.current) return;
+        setAiThinkingProgress({
+          currentDepth: data.depth,
+          timeElapsed: data.elapsed,
+          nodesSearched: data.nodes,
+          isFromBook: false,
+        });
+        return;
+      }
+      
+      // Handle final result
+      const { move: aiMove, requestId } = data;
       const currentBoard = pendingBoardRef.current;
       if (!currentBoard) return;
 
       // Ignore stale responses from previous requests
       if (requestId !== undefined && requestId !== requestIdRef.current) return;
 
+      // Stop thinking progress timer
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+        thinkingTimerRef.current = null;
+      }
+
       handleAIResponseFromWorker(currentBoard, aiMove);
     };
 
     return () => {
       worker.terminate();
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+      }
     };
   }, []);
 
@@ -98,12 +139,15 @@ export function useGameState() {
     if (!aiMove) {
       setStatus('red_wins');
       setAiThinking(false);
+      setAiThinkingProgress(null);
+      if (soundEnabled) playGameOverSound();
       return;
     }
 
     const piece = currentBoard[aiMove.from.row][aiMove.from.col];
     if (!piece) {
       setAiThinking(false);
+      setAiThinkingProgress(null);
       return;
     }
 
@@ -112,13 +156,26 @@ export function useGameState() {
 
     setBoard(newBoard);
     setLastMove({ from: aiMove.from, to: aiMove.to });
-    setMoveHistory(prev => [...prev, move]);
+    setMoveHistory(prev => {
+      const newHistory = [...prev, move];
+      moveHistoryRef.current = newHistory.map(m => ({ from: m.from, to: m.to }));
+      return newHistory;
+    });
 
     if (captured) {
       setCapturedPieces(prev => ({
         ...prev,
         black: [...prev.black, captured],
       }));
+    }
+
+    // Play sound
+    if (soundEnabled) {
+      if (captured) {
+        playCaptureSound();
+      } else {
+        playMoveSound();
+      }
     }
 
     // Save to history for undo
@@ -131,12 +188,19 @@ export function useGameState() {
       setCurrentTurn('red');
       setCheckState(false);
       setAiThinking(false);
+      setAiThinkingProgress(null);
+      if (soundEnabled) playGameOverSound();
       return;
     }
 
-    setCheckState(isInCheck(newBoard, 'red'));
+    const inCheck = isInCheck(newBoard, 'red');
+    setCheckState(inCheck);
+    if (inCheck && soundEnabled) {
+      playCheckSound();
+    }
     setCurrentTurn('red');
     setAiThinking(false);
+    setAiThinkingProgress(null);
 
     // Store search metadata for display
     setAiSearchDepth(aiMove.searchDepth);
@@ -146,7 +210,7 @@ export function useGameState() {
     if (aiExplanationEnabledRef.current) {
       fetchAIExplanation(currentBoard, aiMove.from, aiMove.to, aiMove.searchDepth, aiMove.score);
     }
-  }, []);
+  }, [soundEnabled]);
 
   const handleCellClick = useCallback((row: number, col: number) => {
     if (status !== 'playing' || currentTurn !== 'red' || aiThinking) return;
@@ -183,7 +247,11 @@ export function useGameState() {
 
     setBoard(newBoard);
     setLastMove({ from, to });
-    setMoveHistory(prev => [...prev, move]);
+    setMoveHistory(prev => {
+      const newHistory = [...prev, move];
+      moveHistoryRef.current = newHistory.map(m => ({ from: m.from, to: m.to }));
+      return newHistory;
+    });
     setSelectedPosition(null);
     setValidMoves([]);
 
@@ -192,6 +260,15 @@ export function useGameState() {
         ...prev,
         [piece.color]: [...prev[piece.color], captured],
       }));
+    }
+
+    // Play sound
+    if (soundEnabled) {
+      if (captured) {
+        playCaptureSound();
+      } else {
+        playMoveSound();
+      }
     }
 
     // Save to history for undo
@@ -203,23 +280,86 @@ export function useGameState() {
       setStatus('red_wins');
       setCurrentTurn('black');
       setCheckState(false);
+      if (soundEnabled) playGameOverSound();
       return;
     }
 
-    setCheckState(isInCheck(newBoard, 'black'));
+    const inCheck = isInCheck(newBoard, 'black');
+    setCheckState(inCheck);
+    if (inCheck && soundEnabled) {
+      playCheckSound();
+    }
     setCurrentTurn('black');
 
-    // Trigger AI move via Web Worker
+    // Trigger AI move
     setTimeout(() => {
       makeAIMove(newBoard);
     }, 200);
-  }, [board, difficulty, aiExplanationEnabled]);
+  }, [board, difficulty, aiExplanationEnabled, soundEnabled]);
 
   const makeAIMove = useCallback((currentBoard: Board) => {
     setAiThinking(true);
     pendingBoardRef.current = currentBoard;
     requestIdRef.current++;
     const currentRequestId = requestIdRef.current;
+
+    // Check opening book first
+    const bookMove = lookupOpeningBook(moveHistoryRef.current, 'black');
+    if (bookMove) {
+      // Verify the book move is valid on the current board
+      const piece = currentBoard[bookMove.from.row][bookMove.from.col];
+      if (piece && piece.color === 'black') {
+        setAiThinkingProgress({
+          currentDepth: 0,
+          timeElapsed: 0,
+          isFromBook: true,
+          openingName: bookMove.name,
+        });
+        
+        // Simulate brief thinking time for natural feel
+        setTimeout(() => {
+          if (requestIdRef.current !== currentRequestId) return;
+          
+          const aiMove: AIMove = {
+            from: bookMove.from,
+            to: bookMove.to,
+            score: 0,
+            searchDepth: 0,
+            nodesSearched: 0,
+          };
+          handleAIResponseFromWorker(currentBoard, aiMove);
+          
+          // Set special metadata for book move
+          setAiSearchDepth(0);
+          setAiScore(null);
+          setAiThinkingProgress({
+            currentDepth: 0,
+            timeElapsed: 0,
+            isFromBook: true,
+            openingName: bookMove.name,
+          });
+        }, 300 + Math.random() * 400); // 300-700ms delay for natural feel
+        return;
+      }
+    }
+
+    // Initialize thinking progress (real updates come from worker)
+    thinkingStartRef.current = Date.now();
+    setAiThinkingProgress({
+      currentDepth: 0,
+      timeElapsed: 0,
+      nodesSearched: 0,
+      isFromBook: false,
+    });
+    
+    // Timer only updates elapsed time display; depth/nodes come from worker
+    thinkingTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - thinkingStartRef.current;
+      setAiThinkingProgress(prev => prev ? {
+        ...prev,
+        timeElapsed: elapsed,
+      } : null);
+    }, 100);
 
     if (workerRef.current) {
       const request = {
@@ -234,8 +374,12 @@ export function useGameState() {
     } else {
       // Fallback: run in main thread if worker not available
       import('../lib/ai').then(({ getBestMove }) => {
-        if (requestIdRef.current !== currentRequestId) return; // Stale
+        if (requestIdRef.current !== currentRequestId) return;
         const aiMove = getBestMove(currentBoard, 'black', difficultyRef.current);
+        if (thinkingTimerRef.current) {
+          clearInterval(thinkingTimerRef.current);
+          thinkingTimerRef.current = null;
+        }
         handleAIResponseFromWorker(currentBoard, aiMove);
       });
     }
@@ -262,12 +406,17 @@ export function useGameState() {
   const newGame = useCallback(() => {
     requestIdRef.current++; // Invalidate any pending AI response
     isNewGameRef.current = true; // Signal worker to reset move counter
+    if (thinkingTimerRef.current) {
+      clearInterval(thinkingTimerRef.current);
+      thinkingTimerRef.current = null;
+    }
     const initialBoard = createInitialBoard();
     setBoard(initialBoard);
     setCurrentTurn('red');
     setSelectedPosition(null);
     setValidMoves([]);
     setMoveHistory([]);
+    moveHistoryRef.current = [];
     setCapturedPieces({ red: [], black: [] });
     setStatus('playing');
     setCheckState(false);
@@ -276,9 +425,11 @@ export function useGameState() {
     setAiSearchDepth(null);
     setAiScore(null);
     setLastMove(null);
+    setAiThinkingProgress(null);
     boardHistory.current = [initialBoard];
     turnHistory.current = ['red'];
-  }, []);
+    if (soundEnabled) playNewGameSound();
+  }, [soundEnabled]);
 
   const undoMove = useCallback(() => {
     if (moveHistory.length < 2 || aiThinking) return; // Undo both player and AI move
@@ -294,6 +445,7 @@ export function useGameState() {
     setBoard(previousBoard);
     setCurrentTurn(previousTurn);
     setMoveHistory(newHistory);
+    moveHistoryRef.current = newHistory.map(m => ({ from: m.from, to: m.to }));
     setSelectedPosition(null);
     setValidMoves([]);
     setStatus('playing');
@@ -302,6 +454,7 @@ export function useGameState() {
     setAiSearchDepth(null);
     setAiScore(null);
     setLastMove(newHistory.length > 0 ? { from: newHistory[newHistory.length - 1].from, to: newHistory[newHistory.length - 1].to } : null);
+    setAiThinkingProgress(null);
 
     boardHistory.current = newBoardHistory;
     turnHistory.current = newTurnHistory;
@@ -318,6 +471,10 @@ export function useGameState() {
 
   const toggleAiExplanation = useCallback(() => {
     setAiExplanationEnabled(prev => !prev);
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled(prev => !prev);
   }, []);
 
   const changeDifficulty = useCallback((d: Difficulty) => {
@@ -341,10 +498,13 @@ export function useGameState() {
     aiSearchDepth,
     aiScore,
     lastMove,
+    soundEnabled,
+    aiThinkingProgress,
     handleCellClick,
     newGame,
     undoMove,
     toggleAiExplanation,
+    toggleSound,
     changeDifficulty,
     setDifficulty: changeDifficulty,
   };

@@ -4,10 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { Piece, PieceColor, Move, PIECE_CHARS, moveToNotation } from '@/lib/xiangqi';
 import { Difficulty } from '@/lib/ai';
-import { GameStatus } from '@/hooks/useGameState';
-import { RotateCcw, Plus, Undo2, Brain, Loader2, Trophy, Swords, Shield } from 'lucide-react';
+import { GameStatus, AIThinkingProgress } from '@/hooks/useGameState';
+import { RotateCcw, Plus, Undo2, Brain, Loader2, Trophy, Swords, Shield, Volume2, VolumeX, BookOpen, Zap } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 
 interface GameInfoPanelProps {
@@ -23,9 +24,12 @@ interface GameInfoPanelProps {
   aiExplanationLoading: boolean;
   aiSearchDepth: number | null;
   aiScore: number | null;
+  soundEnabled: boolean;
+  aiThinkingProgress: AIThinkingProgress | null;
   onNewGame: () => void;
   onUndo: () => void;
   onToggleExplanation: () => void;
+  onToggleSound: () => void;
   onChangeDifficulty: (d: Difficulty) => void;
 }
 
@@ -48,9 +52,12 @@ export default function GameInfoPanel({
   aiExplanationLoading,
   aiSearchDepth,
   aiScore,
+  soundEnabled,
+  aiThinkingProgress,
   onNewGame,
   onUndo,
   onToggleExplanation,
+  onToggleSound,
   onChangeDifficulty,
 }: GameInfoPanelProps) {
   const getStatusText = () => {
@@ -97,6 +104,14 @@ export default function GameInfoPanel({
     </div>
   );
 
+  const getTimeLimit = () => {
+    switch (difficulty) {
+      case 'easy': return 500;
+      case 'medium': return 3000;
+      case 'hard': return 5000;
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 w-full max-w-sm">
       {/* Game Status */}
@@ -107,6 +122,50 @@ export default function GameInfoPanel({
           </div>
         </CardContent>
       </Card>
+
+      {/* AI Thinking Progress */}
+      {aiThinking && aiThinkingProgress && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="py-3 px-4 space-y-2">
+            {aiThinkingProgress.isFromBook ? (
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-blue-600 animate-pulse" />
+                <span className="text-sm font-medium text-blue-800">
+                  开局库：{aiThinkingProgress.openingName || '查找中...'}
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-blue-600 animate-pulse" />
+                    <span className="text-sm font-medium text-blue-800">
+                      搜索深度：{aiThinkingProgress.currentDepth} 层
+                    </span>
+                  </div>
+                  <span className="text-xs text-blue-600">
+                    {(aiThinkingProgress.timeElapsed / 1000).toFixed(1)}s
+                  </span>
+                </div>
+                {aiThinkingProgress.nodesSearched !== undefined && aiThinkingProgress.nodesSearched > 0 && (
+                  <div className="text-xs text-blue-600">
+                    已搜索 {aiThinkingProgress.nodesSearched.toLocaleString()} 个节点
+                    {aiThinkingProgress.timeElapsed > 0 && (
+                      <span className="ml-2">
+                        ({Math.round(aiThinkingProgress.nodesSearched / (aiThinkingProgress.timeElapsed / 1000)).toLocaleString()} 节点/秒)
+                      </span>
+                    )}
+                  </div>
+                )}
+                <Progress 
+                  value={Math.min((aiThinkingProgress.timeElapsed / getTimeLimit()) * 100, 95)} 
+                  className="h-2"
+                />
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Game Controls */}
       <Card>
@@ -153,16 +212,35 @@ export default function GameInfoPanel({
             </Button>
           </div>
 
-          {/* AI Explanation Toggle */}
-          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-            <div className="flex items-center gap-2">
-              <Brain className="w-4 h-4 text-purple-600" />
-              <span className="text-sm font-medium">AI 解说</span>
+          {/* Toggles */}
+          <div className="space-y-2">
+            {/* AI Explanation Toggle */}
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-purple-600" />
+                <span className="text-sm font-medium">AI 解说</span>
+              </div>
+              <Switch
+                checked={aiExplanationEnabled}
+                onCheckedChange={onToggleExplanation}
+              />
             </div>
-            <Switch
-              checked={aiExplanationEnabled}
-              onCheckedChange={onToggleExplanation}
-            />
+
+            {/* Sound Toggle */}
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center gap-2">
+                {soundEnabled ? (
+                  <Volume2 className="w-4 h-4 text-blue-600" />
+                ) : (
+                  <VolumeX className="w-4 h-4 text-gray-400" />
+                )}
+                <span className="text-sm font-medium">音效</span>
+              </div>
+              <Switch
+                checked={soundEnabled}
+                onCheckedChange={onToggleSound}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -180,13 +258,22 @@ export default function GameInfoPanel({
             {/* Search depth info badge */}
             {aiSearchDepth !== null && (
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
-                  搜索深度：{aiSearchDepth} 层
-                </Badge>
-                {aiScore !== null && (
-                  <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
-                    评估分数：{aiScore > 0 ? '+' : ''}{aiScore}
+                {aiSearchDepth === 0 ? (
+                  <Badge variant="outline" className="text-xs bg-green-100 text-green-700 border-green-300">
+                    <BookOpen className="w-3 h-3 mr-1" />
+                    开局库走法
                   </Badge>
+                ) : (
+                  <>
+                    <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
+                      搜索深度：{aiSearchDepth} 层
+                    </Badge>
+                    {aiScore !== null && (
+                      <Badge variant="outline" className="text-xs bg-purple-100 text-purple-700 border-purple-300">
+                        评估分数：{aiScore > 0 ? '+' : ''}{aiScore}
+                      </Badge>
+                    )}
+                  </>
                 )}
               </div>
             )}
