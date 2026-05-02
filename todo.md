@@ -52,3 +52,4 @@
 - [x] Game save/load UI with list of saved games
 - [x] Resume game from saved state (including AI turn detection)
 - [x] Add step-by-step replay controls for saved game history
+- [x] Fix AI blunder bug: hard mode AI gives away pieces (送子) causing massive disadvantage

@@ -47,6 +47,8 @@ let moveCounter = 0;
 
 export function resetMoveCounter(): void {
   moveCounter = 0;
+  ttClear();
+  historyScores.fill(0);
 }
 
 // ==================== Zobrist Hashing ====================
@@ -146,7 +148,7 @@ function ttStore(hash: number, depth: number, score: number, flag: number, fromR
   }
 }
 
-function ttClear(): void {
+export function ttClear(): void {
   ttTable.fill(null);
 }
 
@@ -417,16 +419,12 @@ function pvs(
   }
   const ttMove = ttResult?.bestMove || null;
 
-  // Razoring
-  if (!inCheck && depth <= 3 && ply > 0) {
+  // Razoring (only for max nodes to avoid incorrectly pruning opponent's threats)
+  if (!inCheck && depth <= 3 && ply > 0 && isMax) {
     const staticEval = evaluateBoard(board, aiColor);
-    if (isMax && staticEval + RAZOR_MARGIN < alpha) {
+    if (staticEval + RAZOR_MARGIN < alpha) {
       const qScore = quiescence(board, alpha, beta, aiColor, currentTurn, hash, 6);
       if (qScore < alpha) return qScore;
-    }
-    if (!isMax && staticEval - RAZOR_MARGIN > beta) {
-      const qScore = quiescence(board, alpha, beta, aiColor, currentTurn, hash, 6);
-      if (qScore > beta) return qScore;
     }
   }
 
@@ -483,11 +481,10 @@ function pvs(
     const piece = board[sm.fromRow][sm.fromCol]!;
     const captured = board[sm.toRow][sm.toCol];
 
-    // Futility Pruning
-    if (!inCheck && depth <= 6 && movesSearched > 0 && !captured) {
+    // Futility Pruning (only for max nodes - min nodes need all defensive moves)
+    if (!inCheck && depth <= 4 && movesSearched > 0 && !captured && isMax) {
       const margin = FUTILITY_MARGIN[depth] || 950;
-      if (isMax && staticEvalForFutility + margin < alpha) continue;
-      if (!isMax && staticEvalForFutility - margin > beta) continue;
+      if (staticEvalForFutility + margin < alpha) continue;
     }
 
     // Make move in place
@@ -665,8 +662,9 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       if (i === 0) {
         score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, 1, true);
       } else {
-        score = pvs(board, depth - 1, currentBestScore, currentBestScore + 1, aiColor, nextTurn, newHash, 1, true);
-        if (!searchAborted && score > currentBestScore && score < beta) {
+        // PVS null window search: use alpha (not currentBestScore) for correct bounds
+        score = pvs(board, depth - 1, alpha, alpha + 1, aiColor, nextTurn, newHash, 1, true);
+        if (!searchAborted && score > alpha && score < beta) {
           score = pvs(board, depth - 1, alpha, beta, aiColor, nextTurn, newHash, 1, true);
         }
       }
@@ -709,8 +707,8 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
           score = pvs(board, depth - 1, -Infinity, Infinity, aiColor, nextTurn, newHash, 1, true);
         } else {
           score = pvs(board, depth - 1, fullBestScore, fullBestScore + 1, aiColor, nextTurn, newHash, 1, true);
-          if (!searchAborted && score > fullBestScore) {
-            score = pvs(board, depth - 1, -Infinity, Infinity, aiColor, nextTurn, newHash, 1, true);
+          if (!searchAborted && score > fullBestScore && score < Infinity) {
+            score = pvs(board, depth - 1, fullBestScore, Infinity, aiColor, nextTurn, newHash, 1, true);
           }
         }
 
