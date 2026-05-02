@@ -26,3 +26,5 @@
 - [x] Optimize evaluation function for speed
 - [x] Increase effective search depth for hard mode
 - [x] Reduce hard mode time limit to 5 seconds
+- [x] Increase hard mode search depth for stronger play
+- [x] Add randomness to avoid repetitive opening moves each game

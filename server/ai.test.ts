@@ -21,10 +21,14 @@ describe("AI Engine", () => {
 
   it("hard mode searches deeper than medium", () => {
     const board = createInitialBoard();
+    const mediumMove = getBestMove(board, 'black', 'medium');
     const hardMove = getBestMove(board, 'black', 'hard');
     expect(hardMove).not.toBeNull();
-    // Hard mode uses iterative deepening with 8s time limit, should reach at least depth 3
-    expect(hardMove!.searchDepth).toBeGreaterThanOrEqual(3);
+    expect(mediumMove).not.toBeNull();
+    // Hard mode (depth 12, 5s) should reach at least depth 4
+    expect(hardMove!.searchDepth).toBeGreaterThanOrEqual(4);
+    // Hard mode should search at least as deep as medium
+    expect(hardMove!.searchDepth).toBeGreaterThanOrEqual(mediumMove!.searchDepth);
   }, 15000);
 
   it("captures a free piece when available", () => {

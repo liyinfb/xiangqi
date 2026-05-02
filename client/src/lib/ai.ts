@@ -23,7 +23,7 @@ export type Difficulty = 'easy' | 'medium' | 'hard';
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 3,
   medium: 5,
-  hard: 8,
+  hard: 12,
 };
 
 // Time limits per difficulty (ms)
@@ -32,6 +32,13 @@ const TIME_LIMIT: Record<Difficulty, number> = {
   medium: 3000,
   hard: 5000,
 };
+
+// Move counter for randomization (tracks how many moves have been made)
+let moveCounter = 0;
+
+export function resetMoveCounter(): void {
+  moveCounter = 0;
+}
 
 // ==================== Zobrist Hashing ====================
 
@@ -616,12 +623,17 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   const maxDepth = DEPTH_MAP[difficulty];
   timeLimit = TIME_LIMIT[difficulty];
   startTime = Date.now();
+  moveCounter++;
   
   const allMoves = getAllValidMoves(board, aiColor);
   if (allMoves.length === 0) return null;
   if (allMoves.length === 1) {
     return { from: allMoves[0].from, to: allMoves[0].to, score: 0, searchDepth: 1 };
   }
+  
+  // Clear transposition table at the start of each search to avoid stale data
+  // and to introduce variation between games
+  ttClear();
   
   // Compute initial hash
   const rootHash = computeZobristHash(board, aiColor);
@@ -752,6 +764,46 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     scoredMoves.sort((a, b) => b.score - a.score);
     const topMoves = scoredMoves.slice(0, Math.min(5, scoredMoves.length));
     return topMoves[Math.floor(Math.random() * topMoves.length)];
+  }
+  
+  // Add randomization: in the opening phase (first 6 moves), pick randomly
+  // among moves with similar scores to add variety
+  if (bestMove && completedDepth >= 2) {
+    const RANDOMIZE_THRESHOLD = moveCounter <= 6 ? 30 : 10; // Wider margin in opening
+    const bestScore = bestMove.score;
+    
+    // Collect all root moves and their scores from the last completed iteration
+    const candidateMoves: AIMove[] = [];
+    const rootMovesFinal = [...allMoves];
+    const ttBestFinal = { from: bestMove.from, to: bestMove.to };
+    sortMoves(board, rootMovesFinal, 0, ttBestFinal);
+    
+    for (const move of rootMovesFinal) {
+      const piece = board[move.from.row][move.from.col]!;
+      const captured = board[move.to.row][move.to.col];
+      const { newBoard } = makeMove(board, move.from, move.to);
+      const newHash = updateHash(rootHash, move.from, move.to, piece, captured, aiColor);
+      
+      // Quick shallow search to get approximate score
+      searchAborted = false;
+      nodesSearched = 0;
+      const quickDepth = Math.min(completedDepth, 3);
+      const score = pvs(newBoard, quickDepth - 1, -Infinity, Infinity, aiColor, nextTurn, newHash, 1, true);
+      
+      if (!searchAborted && Math.abs(score - bestScore) <= RANDOMIZE_THRESHOLD) {
+        candidateMoves.push({ from: move.from, to: move.to, score, searchDepth: completedDepth });
+      }
+      
+      // Don't spend too much time on randomization
+      if (Date.now() - startTime > timeLimit * 0.95) break;
+      if (candidateMoves.length >= 5) break;
+    }
+    
+    if (candidateMoves.length > 1) {
+      const chosen = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+      chosen.searchDepth = completedDepth;
+      return chosen;
+    }
   }
   
   if (bestMove) {

@@ -62,6 +62,7 @@ export function useGameState() {
   const workerRef = useRef<Worker | null>(null);
   const pendingBoardRef = useRef<Board | null>(null);
   const requestIdRef = useRef<number>(0);
+  const isNewGameRef = useRef(true);
   const aiExplanationEnabledRef = useRef(aiExplanationEnabled);
   const difficultyRef = useRef(difficulty);
 
@@ -221,12 +222,14 @@ export function useGameState() {
     const currentRequestId = requestIdRef.current;
 
     if (workerRef.current) {
-      const request: AIWorkerRequest & { requestId: number } = {
+      const request = {
         board: currentBoard,
-        aiColor: 'black',
+        aiColor: 'black' as const,
         difficulty: difficultyRef.current,
         requestId: currentRequestId,
+        isNewGame: isNewGameRef.current,
       };
+      isNewGameRef.current = false;
       workerRef.current.postMessage(request);
     } else {
       // Fallback: run in main thread if worker not available
@@ -258,6 +261,7 @@ export function useGameState() {
 
   const newGame = useCallback(() => {
     requestIdRef.current++; // Invalidate any pending AI response
+    isNewGameRef.current = true; // Signal worker to reset move counter
     const initialBoard = createInitialBoard();
     setBoard(initialBoard);
     setCurrentTurn('red');

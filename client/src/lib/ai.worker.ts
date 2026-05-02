@@ -1,6 +1,6 @@
 // Web Worker for AI computation - runs in a separate thread to avoid blocking UI
 
-import { getBestMove, Difficulty, AIMove } from './ai';
+import { getBestMove, Difficulty, AIMove, resetMoveCounter } from './ai';
 import { Board, PieceColor } from './xiangqi';
 
 export interface AIWorkerRequest {
@@ -14,9 +14,14 @@ export interface AIWorkerResponse {
   timeMs: number;
 }
 
-self.onmessage = (e: MessageEvent<AIWorkerRequest & { requestId?: number }>) => {
-  const { board, aiColor, difficulty, requestId } = e.data;
+self.onmessage = (e: MessageEvent<AIWorkerRequest & { requestId?: number; moveNumber?: number; isNewGame?: boolean }>) => {
+  const { board, aiColor, difficulty, requestId, moveNumber, isNewGame } = e.data;
   const start = Date.now();
+  
+  // Reset move counter if this is a new game
+  if (isNewGame) {
+    resetMoveCounter();
+  }
   
   const move = getBestMove(board, aiColor, difficulty);
   
