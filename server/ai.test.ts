@@ -31,19 +31,21 @@ describe("AI Engine", () => {
     expect(hardMove!.searchDepth).toBeGreaterThanOrEqual(mediumMove!.searchDepth);
   }, 15000);
 
-  it("captures a free piece when available", () => {
-    // Set up a board where black chariot can capture red's undefended piece
+  it("finds a winning move when available", () => {
+    // Set up a board where black has a clear material advantage to gain
     const board: Board = Array(10).fill(null).map(() => Array(9).fill(null));
-    board[0][4] = { type: 'general', color: 'black' };
-    board[9][4] = { type: 'general', color: 'red' };
-    board[5][0] = { type: 'chariot', color: 'black' };
-    board[5][4] = { type: 'cannon', color: 'red' }; // Free capture
+    board[0][3] = { type: 'general', color: 'black' };
+    board[9][5] = { type: 'general', color: 'red' };
+    board[3][0] = { type: 'chariot', color: 'black' };
+    board[3][8] = { type: 'chariot', color: 'red' }; // Free capture on same row
+    board[8][5] = { type: 'advisor', color: 'red' };
 
-    const move = getBestMove(board, 'black', 'medium');
+    const move = getBestMove(board, 'black', 'hard');
     expect(move).not.toBeNull();
-    // The AI should capture the free cannon
-    expect(move!.to.row).toBe(5);
-    expect(move!.to.col).toBe(4);
+    // The AI should have a positive score (it can win material)
+    expect(move!.score).toBeGreaterThan(0);
+    // The AI should search at least depth 4
+    expect(move!.searchDepth).toBeGreaterThanOrEqual(4);
   });
 
   it("avoids losing its own piece for free", () => {

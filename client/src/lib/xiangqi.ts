@@ -625,11 +625,20 @@ export function getAllValidMoves(board: Board, color: PieceColor): { from: Posit
 // ==================== Fast Move Generation for AI ====================
 // Uses in-place make/undo to avoid cloning the board for every move legality check
 
+// Pre-allocated constant arrays (avoid GC pressure from per-call allocation)
+const ATTACK_DIRS_DR = [-1, 1, 0, 0];
+const ATTACK_DIRS_DC = [0, 0, -1, 1];
+const HORSE_ATK_DR = [-2, -2, 2, 2, -1, -1, 1, 1];
+const HORSE_ATK_DC = [-1, 1, -1, 1, -2, 2, -2, 2];
+const HORSE_ATK_BR = [-1, -1, 1, 1, 0, 0, 0, 0];
+const HORSE_ATK_BC = [0, 0, 0, 0, -1, 1, -1, 1];
+
 // Fast check if a specific square is attacked by the opponent
 function isSquareAttacked(board: Board, targetRow: number, targetCol: number, byColor: PieceColor): boolean {
-  // Check attacks by chariot/cannon along lines
-  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-  for (const [dr, dc] of directions) {
+  // Check attacks by chariot/cannon along lines (unrolled directions)
+  for (let d = 0; d < 4; d++) {
+    const dr = ATTACK_DIRS_DR[d];
+    const dc = ATTACK_DIRS_DC[d];
     let r = targetRow + dr;
     let c = targetCol + dc;
     let jumped = false;
@@ -637,15 +646,12 @@ function isSquareAttacked(board: Board, targetRow: number, targetCol: number, by
       const p = board[r][c];
       if (p) {
         if (!jumped) {
-          // Direct line of sight - chariot or general can attack
           if (p.color === byColor) {
             if (p.type === 'chariot') return true;
-            // General facing (flying general)
             if (p.type === 'general') return true;
           }
           jumped = true;
         } else {
-          // After one piece jumped - cannon can attack
           if (p.color === byColor && p.type === 'cannon') return true;
           break;
         }
@@ -655,19 +661,13 @@ function isSquareAttacked(board: Board, targetRow: number, targetCol: number, by
     }
   }
 
-  // Check attacks by horse
-  const horseAttacks = [
-    [-2, -1, -1, 0], [-2, 1, -1, 0],
-    [2, -1, 1, 0], [2, 1, 1, 0],
-    [-1, -2, 0, -1], [-1, 2, 0, 1],
-    [1, -2, 0, -1], [1, 2, 0, 1],
-  ];
-  for (const [dr, dc, br, bc] of horseAttacks) {
-    const hr = targetRow + dr;
-    const hc = targetCol + dc;
+  // Check attacks by horse (unrolled)
+  for (let i = 0; i < 8; i++) {
+    const hr = targetRow + HORSE_ATK_DR[i];
+    const hc = targetCol + HORSE_ATK_DC[i];
     if (hr >= 0 && hr <= 9 && hc >= 0 && hc <= 8) {
-      const blockR = targetRow + br;
-      const blockC = targetCol + bc;
+      const blockR = targetRow + HORSE_ATK_BR[i];
+      const blockC = targetCol + HORSE_ATK_BC[i];
       if (!board[blockR][blockC]) {
         const p = board[hr][hc];
         if (p && p.color === byColor && p.type === 'horse') return true;
@@ -677,12 +677,10 @@ function isSquareAttacked(board: Board, targetRow: number, targetCol: number, by
 
   // Check attacks by soldier
   if (byColor === 'red') {
-    // Red soldiers attack upward and sideways after crossing
     if (targetRow + 1 <= 9) {
       const p = board[targetRow + 1][targetCol];
       if (p && p.color === 'red' && p.type === 'soldier') return true;
     }
-    // Sideways attack (soldier must have crossed river: row <= 4)
     if (targetCol - 1 >= 0) {
       const p = board[targetRow][targetCol - 1];
       if (p && p.color === 'red' && p.type === 'soldier' && targetRow <= 4) return true;
@@ -692,7 +690,6 @@ function isSquareAttacked(board: Board, targetRow: number, targetCol: number, by
       if (p && p.color === 'red' && p.type === 'soldier' && targetRow <= 4) return true;
     }
   } else {
-    // Black soldiers attack downward and sideways after crossing
     if (targetRow - 1 >= 0) {
       const p = board[targetRow - 1][targetCol];
       if (p && p.color === 'black' && p.type === 'soldier') return true;
@@ -758,23 +755,29 @@ function isInCheckFast(board: Board, color: PieceColor): boolean {
 
 // Fast flying general check (only checks the column between generals)
 function generalsAreFacingFast(board: Board): boolean {
-  // Find both generals quickly in their palace areas
+  // Find both generals quickly in their palace areas (only 9 cells each)
   let redRow = -1, redCol = -1, blackRow = -1, blackCol = -1;
+  // Red palace: rows 7-9, cols 3-5
   for (let row = 7; row <= 9; row++) {
     for (let col = 3; col <= 5; col++) {
       const p = board[row][col];
-      if (p && p.type === 'general' && p.color === 'red') {
+      if (p && p.type === 'general') {
         redRow = row; redCol = col;
+        break;
       }
     }
+    if (redRow >= 0) break;
   }
+  // Black palace: rows 0-2, cols 3-5
   for (let row = 0; row <= 2; row++) {
     for (let col = 3; col <= 5; col++) {
       const p = board[row][col];
-      if (p && p.type === 'general' && p.color === 'black') {
+      if (p && p.type === 'general') {
         blackRow = row; blackCol = col;
+        break;
       }
     }
+    if (blackRow >= 0) break;
   }
   if (redCol < 0 || blackCol < 0 || redCol !== blackCol) return false;
   for (let row = blackRow + 1; row < redRow; row++) {

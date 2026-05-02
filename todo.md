@@ -32,3 +32,9 @@
 - [x] Add Futility Pruning to skip hopeless nodes at shallow depths
 - [x] Add Razoring to cut off clearly losing positions early
 - [x] Optimize move generation and evaluation for speed (fast in-place make/undo, capture-only generator, isSquareAttacked)
+- [x] Incremental Zobrist hash update in AI search (updateHash function)
+- [x] More aggressive pruning parameters (NMP R=4 at depth>=8, wider futility margins)
+- [x] Delta pruning in quiescence search for better capture ordering
+- [x] Pre-allocated constant arrays for attack detection (avoid per-call GC)
+- [x] Optimized general-finding with early break in generalsAreFacingFast
+- [x] Removed expensive isInCheck from evaluation function (handled by search extensions)
