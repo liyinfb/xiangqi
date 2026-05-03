@@ -19,6 +19,8 @@ import {
   getAllValidMoves,
   getAllValidMovesFast,
   getCaptureMovesFast,
+  getCheckMovesFast,
+  getSmallestAttacker,
   isCheckmate,
   isInCheck,
   isInCheckFastExport,
@@ -335,28 +337,119 @@ function evaluateForSide(board: Board, currentTurn: PieceColor): number {
       const attackedBy = piece.color === currentTurn ? oppColor : currentTurn;
       
       if (isSquareAttacked(board, row, col, attackedBy)) {
-        // Check if the piece is defended (attacked by its own side)
         const defendedBy = piece.color;
         const isDefended = isSquareAttacked(board, row, col, defendedBy);
         
         if (!isDefended) {
-          // Hanging piece - severe penalty
           const penalty = Math.floor(pieceVal * HANGING_PENALTY_FRACTION);
-          if (piece.color === currentTurn) {
-            score -= penalty;
-          } else {
-            score += penalty;
-          }
+          if (piece.color === currentTurn) score -= penalty;
+          else score += penalty;
         } else {
-          // Attacked but defended - mild penalty (tension)
           const penalty = Math.floor(pieceVal * ATTACKED_DEFENDED_PENALTY_FRACTION);
-          if (piece.color === currentTurn) {
-            score -= penalty;
-          } else {
-            score += penalty;
-          }
+          if (piece.color === currentTurn) score -= penalty;
+          else score += penalty;
         }
       }
+    }
+  }
+  
+  // ---- King Safety ----
+  // Reward having advisors and elephants near the general (palace defense)
+  let myKingSafety = 0;
+  let oppKingSafety = 0;
+  
+  // Find generals
+  let myKingRow = -1, myKingCol = -1, oppKingRow = -1, oppKingCol = -1;
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 3; col <= 5; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general') {
+        if (p.color === currentTurn) { myKingRow = row; myKingCol = col; }
+        else { oppKingRow = row; oppKingCol = col; }
+      }
+    }
+  }
+  
+  // Count defenders around each general
+  if (myKingRow >= 0) {
+    const kRow = myKingRow, kCol = myKingCol;
+    // Check adjacent squares for advisors/elephants
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const r = kRow + dr, c = kCol + dc;
+        if (r < 0 || r > 9 || c < 0 || c > 8) continue;
+        const p = board[r][c];
+        if (p && p.color === currentTurn && (p.type === 'advisor' || p.type === 'elephant')) {
+          myKingSafety += 8;
+        }
+      }
+    }
+  }
+  if (oppKingRow >= 0) {
+    const kRow = oppKingRow, kCol = oppKingCol;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const r = kRow + dr, c = kCol + dc;
+        if (r < 0 || r > 9 || c < 0 || c > 8) continue;
+        const p = board[r][c];
+        if (p && p.color === oppColor && (p.type === 'advisor' || p.type === 'elephant')) {
+          oppKingSafety += 8;
+        }
+      }
+    }
+  }
+  score += myKingSafety - oppKingSafety;
+  
+  // ---- Piece Coordination: Chariot on open file ----
+  // Reward chariots that are on files with no friendly pawns blocking them
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (!piece || piece.type !== 'chariot') continue;
+      
+      // Check if the file (column) is open (no friendly soldiers on it)
+      let fileBlocked = false;
+      for (let r = 0; r <= 9; r++) {
+        if (r === row) continue;
+        const p = board[r][col];
+        if (p && p.color === piece.color && p.type === 'soldier') {
+          fileBlocked = true;
+          break;
+        }
+      }
+      
+      if (!fileBlocked) {
+        const bonus = 12; // Open file bonus for chariot
+        if (piece.color === currentTurn) score += bonus;
+        else score -= bonus;
+      }
+    }
+  }
+  
+  // ---- Piece Coordination: Connected chariots ----
+  // Reward two chariots of the same color on the same rank or file with nothing between
+  // (simplified: just check if both chariots exist and are on same rank/file)
+  let myChariots: { row: number; col: number }[] = [];
+  let oppChariots: { row: number; col: number }[] = [];
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'chariot') {
+        if (p.color === currentTurn) myChariots.push({ row, col });
+        else oppChariots.push({ row, col });
+      }
+    }
+  }
+  if (myChariots.length === 2) {
+    if (myChariots[0].row === myChariots[1].row || myChariots[0].col === myChariots[1].col) {
+      score += 15; // Connected chariots bonus
+    }
+  }
+  if (oppChariots.length === 2) {
+    if (oppChariots[0].row === oppChariots[1].row || oppChariots[0].col === oppChariots[1].col) {
+      score -= 15;
     }
   }
   
@@ -467,8 +560,13 @@ function generateScoredMoves(
       const captured = board[tr][tc];
       if (captured) {
         const attacker = board[fr][fc]!;
-        // MVV-LVA: prioritize capturing high-value pieces with low-value attackers
-        s = 1000000 + EVAL_PIECE_VALUES[captured.type] * 10 - EVAL_PIECE_VALUES[attacker.type];
+        // MVV-LVA base score, then demote losing captures via SEE
+        const mvvlva = EVAL_PIECE_VALUES[captured.type] * 10 - EVAL_PIECE_VALUES[attacker.type];
+        if (seeGe(board, fr, fc, tr, tc, 0)) {
+          s = 1000000 + mvvlva; // Winning/equal capture: high priority
+        } else {
+          s = 100000 + mvvlva; // Losing capture: below killers/counters but above quiet moves
+        }
       } else if (isKiller(fr, fc, tr, tc, ply)) {
         s = 900000;
       } else if (fr === counterFr && fc === counterFc && tr === counterTr && tc === counterTc) {
@@ -508,6 +606,93 @@ function isBoardSymmetric(board: Board): boolean {
     }
   }
   return true;
+}
+
+// ==================== Static Exchange Evaluation (SEE) ====================
+
+// SEE evaluates a capture sequence to determine if a capture is winning.
+// Uses save/restore approach to properly handle board modifications.
+function see(board: Board, fromRow: number, fromCol: number, toRow: number, toCol: number): number {
+  const target = board[toRow][toCol];
+  if (!target) return 0;
+  
+  const attacker = board[fromRow][fromCol];
+  if (!attacker) return 0;
+  
+  // Save all modified squares for restoration
+  const savedSquares: { row: number; col: number; piece: Piece | null }[] = [];
+  function saveSq(r: number, c: number) {
+    savedSquares.push({ row: r, col: c, piece: board[r][c] });
+  }
+  function restoreAll() {
+    for (let i = savedSquares.length - 1; i >= 0; i--) {
+      const s = savedSquares[i];
+      board[s.row][s.col] = s.piece;
+    }
+  }
+  
+  // Gain array: gains[d] = value captured at depth d
+  const gains = new Int32Array(32);
+  gains[0] = EVAL_PIECE_VALUES[target.type];
+  
+  let currentAttackerValue = EVAL_PIECE_VALUES[attacker.type];
+  let currentColor: PieceColor = attacker.color === 'red' ? 'black' : 'red';
+  
+  // Simulate initial capture
+  saveSq(fromRow, fromCol);
+  saveSq(toRow, toCol);
+  board[toRow][toCol] = attacker;
+  board[fromRow][fromCol] = null;
+  
+  let d = 1;
+  while (d < 32) {
+    const nextAttacker = getSmallestAttacker(board, toRow, toCol, currentColor);
+    if (!nextAttacker) break;
+    
+    gains[d] = currentAttackerValue - gains[d - 1];
+    
+    // Pruning: if max of standing pat and capturing is negative, stop
+    if (Math.max(-gains[d - 1], gains[d]) < 0) break;
+    
+    currentAttackerValue = nextAttacker.value;
+    
+    // Simulate this capture
+    saveSq(nextAttacker.row, nextAttacker.col);
+    saveSq(toRow, toCol);
+    board[toRow][toCol] = board[nextAttacker.row][nextAttacker.col];
+    board[nextAttacker.row][nextAttacker.col] = null;
+    
+    currentColor = currentColor === 'red' ? 'black' : 'red';
+    d++;
+  }
+  
+  // Restore board to original state
+  restoreAll();
+  
+  // Negamax on gains to find the optimal exchange value
+  while (--d > 0) {
+    gains[d - 1] = -Math.max(-gains[d - 1], gains[d]);
+  }
+  
+  return gains[0];
+}
+
+// Fast SEE threshold check: returns true if SEE >= threshold
+function seeGe(board: Board, fromRow: number, fromCol: number, toRow: number, toCol: number, threshold: number): boolean {
+  const target = board[toRow][toCol];
+  if (!target) return threshold <= 0;
+  
+  const attacker = board[fromRow][fromCol];
+  if (!attacker) return false;
+  
+  // Quick bounds check
+  let balance = EVAL_PIECE_VALUES[target.type] - threshold;
+  if (balance < 0) return false;
+  
+  balance -= EVAL_PIECE_VALUES[attacker.type];
+  if (balance >= 0) return true;
+  
+  return see(board, fromRow, fromCol, toRow, toCol) >= threshold;
 }
 
 // ==================== In-Place Make/Undo ====================
@@ -563,6 +748,45 @@ function quiescence(
 ): number {
   nodesSearched++;
 
+  // Time check in quiescence too (every 8192 nodes)
+  if ((nodesSearched & 8191) === 0) {
+    if (Date.now() - startTime > timeLimit) {
+      searchAborted = true;
+      return 0;
+    }
+  }
+
+  const inCheck = isInCheckFastExport(board, currentTurn);
+  
+  // If in check, we must search all evasions (don't use stand pat)
+  if (inCheck) {
+    if (qDepth <= -4) return evaluateForSide(board, currentTurn); // Safety limit
+    
+    const evasions = getAllValidMovesFast(board, currentTurn);
+    if (evasions.length === 0) return -200000; // Checkmate
+    
+    let bestScore = -INF;
+    const nextTurn = currentTurn === 'red' ? 'black' : 'red';
+    
+    for (let i = 0; i < evasions.length; i++) {
+      const m = evasions[i];
+      const piece = board[m.from.row][m.from.col]!;
+      const captured = makeMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col);
+      const newHash = updateHash(hash, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
+      
+      const score = -quiescence(board, -beta, -alpha, nextTurn, newHash, qDepth - 1);
+      
+      undoMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
+      
+      if (searchAborted) return 0;
+      if (score > bestScore) bestScore = score;
+      if (score > alpha) alpha = score;
+      if (alpha >= beta) return beta;
+    }
+    
+    return bestScore;
+  }
+
   const standPat = evaluateForSide(board, currentTurn);
 
   if (qDepth <= 0) return standPat;
@@ -570,11 +794,10 @@ function quiescence(
   if (standPat >= beta) return beta;
   if (standPat > alpha) alpha = standPat;
 
-  // Generate only captures
+  // Generate captures
   const captureMoves = getCaptureMovesFast(board, currentTurn);
 
-  // Build local capture list with victim values for sorting
-  // MUST be local (not shared global) because quiescence recurses
+  // Build local capture list with SEE values for sorting
   const captures: { fr: number; fc: number; tr: number; tc: number; vv: number }[] = [];
   for (let i = 0; i < captureMoves.length; i++) {
     const m = captureMoves[i];
@@ -598,6 +821,9 @@ function quiescence(
     const cap = captures[ci];
     // Delta pruning
     if (standPat + cap.vv + DELTA < alpha) continue;
+    
+    // SEE pruning in quiescence: skip losing captures
+    if (!seeGe(board, cap.fr, cap.fc, cap.tr, cap.tc, 0)) continue;
 
     const piece = board[cap.fr][cap.fc]!;
     const captured = makeMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc);
@@ -607,8 +833,28 @@ function quiescence(
 
     undoMoveInPlace(board, cap.fr, cap.fc, cap.tr, cap.tc, piece, captured);
 
+    if (searchAborted) return 0;
     if (score >= beta) return beta;
     if (score > alpha) alpha = score;
+  }
+
+  // Also search check-giving moves (only at higher qDepth to limit explosion)
+  if (qDepth >= 4) {
+    const checkMoves = getCheckMovesFast(board, currentTurn);
+    for (let ci = 0; ci < checkMoves.length; ci++) {
+      const m = checkMoves[ci];
+      const piece = board[m.from.row][m.from.col]!;
+      const captured = makeMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col);
+      const newHash = updateHash(hash, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
+
+      const score = -quiescence(board, -beta, -alpha, nextTurn, newHash, qDepth - 2); // Reduce depth faster for checks
+
+      undoMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
+
+      if (searchAborted) return 0;
+      if (score >= beta) return beta;
+      if (score > alpha) alpha = score;
+    }
   }
 
   return alpha;
@@ -712,6 +958,17 @@ function pvs(
     }
   }
 
+  // Reverse Futility Pruning (Static Null Move Pruning)
+  // If our position is so good that even after giving a margin, we're still above beta,
+  // we can prune this node without searching.
+  if (!isPV && !inCheck && depth <= 6 && ply > 0) {
+    const rfpEval = evaluateForSide(board, currentTurn);
+    const rfpMargin = depth * 120; // ~120 per depth
+    if (rfpEval - rfpMargin >= beta) {
+      return rfpEval;
+    }
+  }
+
   // Internal Iterative Deepening (IID)
   // When no TT move is available at high depth, do a shallow search first
   // to get a good move for ordering
@@ -769,6 +1026,28 @@ function pvs(
       if (staticEvalForFutility + margin < alpha) continue;
     }
 
+    // SEE-based pruning: skip captures with negative SEE at low depths (bad captures)
+    if (!isPV && !inCheck && isCapture && movesSearched > 0 && !isTTMove && depth <= 6) {
+      if (!seeGe(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, 0)) {
+        continue; // Losing capture, skip it
+      }
+    }
+
+    // Singular Extension: if TT move is significantly better than alternatives,
+    // extend its search depth to avoid missing critical lines.
+    // Done BEFORE making the move so we can search the position cleanly.
+    let singularExtension = 0;
+    if (isTTMove && depth >= 8 && !inCheck && ttResult && ttResult.flag !== TT_UPPERBOUND) {
+      const singularBeta = (ttResult.score || 0) - depth * 2;
+      const singularDepth = Math.floor((depth - 1) / 2);
+      // Do a reduced-depth search excluding the TT move
+      // We use the current position (before making TT move) with a null-window
+      const excludeScore = pvs(board, singularDepth, singularBeta - 1, singularBeta, currentTurn, hash, ply, false);
+      if (!searchAborted && excludeScore < singularBeta) {
+        singularExtension = 1;
+      }
+    }
+
     // Make move in place
     makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
     const newHash = updateHash(hash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
@@ -784,26 +1063,34 @@ function pvs(
 
     if (movesSearched === 0) {
       // Full window search for first move (PV move)
-      score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, ply + 1, true);
+      score = -pvs(board, depth - 1 + singularExtension, -beta, -alpha, nextTurn, newHash, ply + 1, true);
     } else {
       // Late Move Reduction
       let reduction = 0;
-      if (depth >= 3 && movesSearched >= 2 && !isCapture && !inCheck) {
+      if (depth >= 3 && movesSearched >= 2 && !inCheck) {
         const newInCheck = isInCheckFastExport(board, nextTurn);
         if (!newInCheck) {
-          // Use pre-computed LMR table
-          const d = Math.min(depth, 63);
-          const m = Math.min(movesSearched, 63);
-          reduction = LMR_TABLE[d * 64 + m];
-          
-          // Reduce less for killer moves and counter moves
-          if (isKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply)) {
-            reduction = Math.max(0, reduction - 1);
-          }
-          // Reduce more for moves with bad history
-          const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
-          if (historyScores[histIdx] < 0) {
-            reduction += 1;
+          if (!isCapture) {
+            // Use pre-computed LMR table for quiet moves
+            const d = Math.min(depth, 63);
+            const m = Math.min(movesSearched, 63);
+            reduction = LMR_TABLE[d * 64 + m];
+            
+            // Reduce less for killer moves and counter moves
+            if (isKiller(sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, ply)) {
+              reduction = Math.max(0, reduction - 1);
+            }
+            // Reduce more for moves with bad history
+            const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
+            if (historyScores[histIdx] < 0) {
+              reduction += 1;
+            }
+          } else {
+            // For captures: reduce bad captures (negative SEE) more aggressively
+            // Good captures (positive SEE) get no reduction
+            if (depth >= 4 && !seeGe(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, 0)) {
+              reduction = 1; // Mild reduction for bad captures that passed earlier pruning
+            }
           }
           // Reduce less in PV nodes
           if (isPV) {

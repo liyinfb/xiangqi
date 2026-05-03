@@ -981,6 +981,159 @@ export function makeMove(board: Board, from: Position, to: Position): { newBoard
   return { newBoard, captured };
 }
 
+// Get the smallest-value attacker of a square by a given color
+// Returns the attacker's position and piece value, or null if no attacker
+export function getSmallestAttacker(board: Board, targetRow: number, targetCol: number, byColor: PieceColor): { row: number; col: number; value: number } | null {
+  let bestRow = -1, bestCol = -1, bestValue = 999999;
+  
+  // Check soldiers first (cheapest pieces)
+  if (byColor === 'red') {
+    if (targetRow + 1 <= 9) {
+      const p = board[targetRow + 1][targetCol];
+      if (p && p.color === 'red' && p.type === 'soldier') {
+        const v = targetRow + 1 >= 5 ? 100 : 220;
+        if (v < bestValue) { bestRow = targetRow + 1; bestCol = targetCol; bestValue = v; }
+      }
+    }
+    if (targetCol - 1 >= 0 && targetRow <= 4) {
+      const p = board[targetRow][targetCol - 1];
+      if (p && p.color === 'red' && p.type === 'soldier') {
+        if (220 < bestValue) { bestRow = targetRow; bestCol = targetCol - 1; bestValue = 220; }
+      }
+    }
+    if (targetCol + 1 <= 8 && targetRow <= 4) {
+      const p = board[targetRow][targetCol + 1];
+      if (p && p.color === 'red' && p.type === 'soldier') {
+        if (220 < bestValue) { bestRow = targetRow; bestCol = targetCol + 1; bestValue = 220; }
+      }
+    }
+  } else {
+    if (targetRow - 1 >= 0) {
+      const p = board[targetRow - 1][targetCol];
+      if (p && p.color === 'black' && p.type === 'soldier') {
+        const v = targetRow - 1 <= 4 ? 100 : 220;
+        if (v < bestValue) { bestRow = targetRow - 1; bestCol = targetCol; bestValue = v; }
+      }
+    }
+    if (targetCol - 1 >= 0 && targetRow >= 5) {
+      const p = board[targetRow][targetCol - 1];
+      if (p && p.color === 'black' && p.type === 'soldier') {
+        if (220 < bestValue) { bestRow = targetRow; bestCol = targetCol - 1; bestValue = 220; }
+      }
+    }
+    if (targetCol + 1 <= 8 && targetRow >= 5) {
+      const p = board[targetRow][targetCol + 1];
+      if (p && p.color === 'black' && p.type === 'soldier') {
+        if (220 < bestValue) { bestRow = targetRow; bestCol = targetCol + 1; bestValue = 220; }
+      }
+    }
+  }
+  
+  // Check horses (value 480)
+  for (let i = 0; i < 8; i++) {
+    const hr = targetRow + HORSE_ATK_DR[i];
+    const hc = targetCol + HORSE_ATK_DC[i];
+    if (hr >= 0 && hr <= 9 && hc >= 0 && hc <= 8) {
+      const blockR = targetRow + HORSE_ATK_BR[i];
+      const blockC = targetCol + HORSE_ATK_BC[i];
+      if (!board[blockR][blockC]) {
+        const p = board[hr][hc];
+        if (p && p.color === byColor && p.type === 'horse' && 480 < bestValue) {
+          bestRow = hr; bestCol = hc; bestValue = 480;
+        }
+      }
+    }
+  }
+  
+  // Check cannons (value 510) and chariots (value 1000) along lines
+  for (let d = 0; d < 4; d++) {
+    const dr = ATTACK_DIRS_DR[d];
+    const dc = ATTACK_DIRS_DC[d];
+    let r = targetRow + dr;
+    let c = targetCol + dc;
+    let jumped = false;
+    while (r >= 0 && r <= 9 && c >= 0 && c <= 8) {
+      const p = board[r][c];
+      if (p) {
+        if (!jumped) {
+          if (p.color === byColor && p.type === 'chariot' && 1000 < bestValue) {
+            bestRow = r; bestCol = c; bestValue = 1000;
+          }
+          jumped = true;
+        } else {
+          if (p.color === byColor && p.type === 'cannon' && 510 < bestValue) {
+            bestRow = r; bestCol = c; bestValue = 510;
+          }
+          break;
+        }
+      }
+      r += dr;
+      c += dc;
+    }
+  }
+  
+  if (bestRow < 0) return null;
+  return { row: bestRow, col: bestCol, value: bestValue };
+}
+
+// Generate moves that give check to the opponent (for quiescence search enhancement)
+export function getCheckMovesFast(board: Board, color: PieceColor): { from: Position; to: Position }[] {
+  const checks: { from: Position; to: Position }[] = [];
+  const oppColor = color === 'red' ? 'black' : 'red';
+  
+  // Find general positions
+  let myGenRow = -1, myGenCol = -1, oppGenRow = -1, oppGenCol = -1;
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const p = board[row][col];
+      if (p && p.type === 'general') {
+        if (p.color === color) { myGenRow = row; myGenCol = col; }
+        else { oppGenRow = row; oppGenCol = col; }
+      }
+    }
+  }
+  
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (!piece || piece.color !== color) continue;
+      // Only check major pieces for giving check (chariot, cannon, horse)
+      if (piece.type !== 'chariot' && piece.type !== 'cannon' && piece.type !== 'horse') continue;
+      
+      const targets = getPseudoMoves(board, row, col, piece);
+      for (const to of targets) {
+        const captured = board[to.row][to.col];
+        if (captured) continue; // Skip captures (already handled by capture generation)
+        
+        // Track general position
+        const curGenRow = myGenRow, curGenCol = myGenCol;
+        
+        // Make move in place
+        board[to.row][to.col] = piece;
+        board[row][col] = null;
+        
+        // Check legality
+        if (!isInCheckFast(board, color, curGenRow, curGenCol) &&
+            !generalsAreFacingFast(board,
+              color === 'red' ? curGenRow : oppGenRow,
+              color === 'red' ? curGenCol : oppGenCol,
+              color === 'black' ? curGenRow : oppGenRow,
+              color === 'black' ? curGenCol : oppGenCol)) {
+          // Check if this move gives check
+          if (isSquareAttacked(board, oppGenRow, oppGenCol, color)) {
+            checks.push({ from: { row, col }, to });
+          }
+        }
+        
+        // Undo
+        board[row][col] = piece;
+        board[to.row][to.col] = captured;
+      }
+    }
+  }
+  return checks;
+}
+
 export function posToNotation(pos: Position): string {
   const colNames = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
   return `${colNames[pos.col]}${9 - pos.row}`;

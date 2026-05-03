@@ -81,3 +81,28 @@
   - Root-level move deduplication: only search one of each mirror pair
   - Score propagation to mirror moves after search
   - Result: search depth increased from 9 to 11 on initial board (same time budget)
+- [x] Implement SEE (Static Exchange Evaluation) for better move ordering and pruning
+  - Added getSmallestAttacker() to xiangqi.ts for iterative exchange simulation
+  - SEE used in move ordering: winning captures scored 1M+, losing captures scored 100K+ (below killers)
+  - SEE-based pruning in PVS: skip losing captures at depth <= 6
+  - SEE pruning in quiescence search to skip bad captures
+  - SEE-based reduction: bad captures that pass pruning get mild LMR reduction
+- [x] Implement Reverse Futility Pruning (Static Null Move Pruning)
+  - At depth <= 6, if staticEval - margin > beta, return staticEval
+  - Margin scales with depth (80 * depth)
+- [x] Implement Singular Extension for TT moves
+  - At depth >= 8, when TT move has a lower/exact bound, do a reduced-depth null-window search
+  - If the verification search scores below singularBeta (ttScore - depth*2), extend TT move by 1 ply
+  - Helps find forced tactical lines where one move is clearly superior
+- [x] Enhance Quiescence Search with check moves (not just captures)
+  - Added getCheckMovesFast() to xiangqi.ts for efficient check move generation
+  - Quiescence now searches check moves in addition to captures
+  - SEE-based pruning for bad captures in quiescence
+- [x] Enhance evaluation function (king safety, open files, piece coordination)
+  - King safety: bonus for advisors/elephants near general (palace defenders)
+  - Chariot on open file: bonus when no friendly soldier blocks the chariot's file
+  - Connected chariots: bonus when two chariots share same row or column (mutual support)
+  - Note: Mobility term intentionally omitted (too expensive per node for iterative deepening; depth > mobility in Xiangqi)
+- [x] Fix stale UI time limits in GameInfoPanel (500/3000/5000 -> 2000/5000/8000)
+- [~] Implement Bitboard representation — SKIPPED (10x9 board doesn't fit 64-bit bitboard well in JavaScript; would require BigInt which is slow)
+- [~] Implement Lazy SMP parallel search — SKIPPED (SharedArrayBuffer requires COOP/COEP headers not practical in this deployment; without shared TT, parallel workers provide minimal benefit)
