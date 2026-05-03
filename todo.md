@@ -114,3 +114,5 @@
   - Also possible: mid/endgame positions with fewer pieces have narrower trees → deeper search
   - No code bug found; depth reporting logic is correct
 - [x] Add tooltip/help text in stats panel explaining why depth varies by position and hardware
+- [x] Adjust difficulty time limits: Easy 2s→0.5s, Medium 5s→3s, Hard 8s→10s for better differentiation
+- [x] Update UI time limit display in GameInfoPanel to match new values

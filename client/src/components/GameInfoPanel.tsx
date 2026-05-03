@@ -174,9 +174,9 @@ export default function GameInfoPanel({
 
   const getTimeLimit = () => {
     switch (difficulty) {
-      case 'easy': return 2000;
-      case 'medium': return 5000;
-      case 'hard': return 8000;
+      case 'easy': return 500;
+      case 'medium': return 3000;
+      case 'hard': return 10000;
     }
   };
 

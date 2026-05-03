@@ -47,9 +47,9 @@ const INF = 300000;
 
 // Time limits per difficulty (ms) - the ONLY difference between difficulty levels
 const TIME_LIMIT: Record<Difficulty, number> = {
-  easy: 2000,
-  medium: 5000,
-  hard: 8000,
+  easy: 500,
+  medium: 3000,
+  hard: 10000,
 };
 
 // Move counter for randomization
