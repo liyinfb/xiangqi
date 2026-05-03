@@ -19,7 +19,6 @@ import {
   getAllValidMoves,
   getAllValidMovesFast,
   getCaptureMovesFast,
-  getCheckMovesFast,
   getSmallestAttacker,
   isCheckmate,
   isInCheck,
@@ -838,25 +837,6 @@ function quiescence(
     if (score > alpha) alpha = score;
   }
 
-  // Also search check-giving moves (only at higher qDepth to limit explosion)
-  if (qDepth >= 4) {
-    const checkMoves = getCheckMovesFast(board, currentTurn);
-    for (let ci = 0; ci < checkMoves.length; ci++) {
-      const m = checkMoves[ci];
-      const piece = board[m.from.row][m.from.col]!;
-      const captured = makeMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col);
-      const newHash = updateHash(hash, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
-
-      const score = -quiescence(board, -beta, -alpha, nextTurn, newHash, qDepth - 2); // Reduce depth faster for checks
-
-      undoMoveInPlace(board, m.from.row, m.from.col, m.to.row, m.to.col, piece, captured);
-
-      if (searchAborted) return 0;
-      if (score >= beta) return beta;
-      if (score > alpha) alpha = score;
-    }
-  }
-
   return alpha;
 }
 
@@ -1033,21 +1013,6 @@ function pvs(
       }
     }
 
-    // Singular Extension: if TT move is significantly better than alternatives,
-    // extend its search depth to avoid missing critical lines.
-    // Done BEFORE making the move so we can search the position cleanly.
-    let singularExtension = 0;
-    if (isTTMove && depth >= 8 && !inCheck && ttResult && ttResult.flag !== TT_UPPERBOUND) {
-      const singularBeta = (ttResult.score || 0) - depth * 2;
-      const singularDepth = Math.floor((depth - 1) / 2);
-      // Do a reduced-depth search excluding the TT move
-      // We use the current position (before making TT move) with a null-window
-      const excludeScore = pvs(board, singularDepth, singularBeta - 1, singularBeta, currentTurn, hash, ply, false);
-      if (!searchAborted && excludeScore < singularBeta) {
-        singularExtension = 1;
-      }
-    }
-
     // Make move in place
     makeMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol);
     const newHash = updateHash(hash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
@@ -1063,7 +1028,7 @@ function pvs(
 
     if (movesSearched === 0) {
       // Full window search for first move (PV move)
-      score = -pvs(board, depth - 1 + singularExtension, -beta, -alpha, nextTurn, newHash, ply + 1, true);
+      score = -pvs(board, depth - 1, -beta, -alpha, nextTurn, newHash, ply + 1, true);
     } else {
       // Late Move Reduction
       let reduction = 0;

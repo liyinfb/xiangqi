@@ -90,14 +90,13 @@
 - [x] Implement Reverse Futility Pruning (Static Null Move Pruning)
   - At depth <= 6, if staticEval - margin > beta, return staticEval
   - Margin scales with depth (80 * depth)
-- [x] Implement Singular Extension for TT moves
-  - At depth >= 8, when TT move has a lower/exact bound, do a reduced-depth null-window search
-  - If the verification search scores below singularBeta (ttScore - depth*2), extend TT move by 1 ply
-  - Helps find forced tactical lines where one move is clearly superior
-- [x] Enhance Quiescence Search with check moves (not just captures)
-  - Added getCheckMovesFast() to xiangqi.ts for efficient check move generation
-  - Quiescence now searches check moves in addition to captures
-  - SEE-based pruning for bad captures in quiescence
+- [~] Singular Extension for TT moves — REMOVED after ablation benchmark
+  - Implemented and tested, but verification search cost more nodes than the extension saved
+  - Midgame depth 11→12 when disabled, confirming net negative impact
+- [~] Quiescence Search check moves — REMOVED after ablation benchmark
+  - Implemented getCheckMovesFast() and searched check moves in quiescence
+  - Tree explosion outweighed tactical gains: opening depth 9→10 when disabled
+  - SEE-based pruning for bad captures in quiescence KEPT (beneficial)
 - [x] Enhance evaluation function (king safety, open files, piece coordination)
   - King safety: bonus for advisors/elephants near general (palace defenders)
   - Chariot on open file: bonus when no friendly soldier blocks the chariot's file
