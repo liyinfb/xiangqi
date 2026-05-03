@@ -25,6 +25,7 @@ import {
   isSquareAttacked,
   makeMove,
 } from './xiangqi';
+import { lookupOpeningBook as lookupOpeningBookInternal } from './openingBook';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -238,6 +239,38 @@ const HANGING_PENALTY_FRACTION = 0.4; // 40% of piece value
 const ATTACKED_DEFENDED_PENALTY_FRACTION = 0.1; // 10% penalty for attacked-but-defended pieces
 
 // NegaMax evaluation: returns score from the perspective of `currentTurn`
+// Development bonus: reward pieces that have moved from their starting positions
+// This encourages the AI to develop pieces in the opening rather than making
+// aimless moves. The bonus is small enough not to override tactical considerations
+// but large enough to break ties between equally-scored moves.
+const DEV_BONUS = 8; // per developed piece
+
+function countDevelopment(board: Board, color: PieceColor): number {
+  let developed = 0;
+  if (color === 'red') {
+    // Red horses: starting at (9,1) and (9,7)
+    if (!(board[9][1]?.type === 'horse' && board[9][1]?.color === 'red')) developed++;
+    if (!(board[9][7]?.type === 'horse' && board[9][7]?.color === 'red')) developed++;
+    // Red chariots: starting at (9,0) and (9,8)
+    if (!(board[9][0]?.type === 'chariot' && board[9][0]?.color === 'red')) developed++;
+    if (!(board[9][8]?.type === 'chariot' && board[9][8]?.color === 'red')) developed++;
+    // Red cannons: starting at (7,1) and (7,7) - reward moving to central/active positions
+    if (!(board[7][1]?.type === 'cannon' && board[7][1]?.color === 'red')) developed++;
+    if (!(board[7][7]?.type === 'cannon' && board[7][7]?.color === 'red')) developed++;
+  } else {
+    // Black horses: starting at (0,1) and (0,7)
+    if (!(board[0][1]?.type === 'horse' && board[0][1]?.color === 'black')) developed++;
+    if (!(board[0][7]?.type === 'horse' && board[0][7]?.color === 'black')) developed++;
+    // Black chariots: starting at (0,0) and (0,8)
+    if (!(board[0][0]?.type === 'chariot' && board[0][0]?.color === 'black')) developed++;
+    if (!(board[0][8]?.type === 'chariot' && board[0][8]?.color === 'black')) developed++;
+    // Black cannons: starting at (2,1) and (2,7)
+    if (!(board[2][1]?.type === 'cannon' && board[2][1]?.color === 'black')) developed++;
+    if (!(board[2][7]?.type === 'cannon' && board[2][7]?.color === 'black')) developed++;
+  }
+  return developed;
+}
+
 function evaluateForSide(board: Board, currentTurn: PieceColor): number {
   let score = 0;
   const oppColor = currentTurn === 'red' ? 'black' : 'red';
@@ -253,6 +286,39 @@ function evaluateForSide(board: Board, currentTurn: PieceColor): number {
         : EVAL_FLAT_BLACK[ti * 90 + sq];
       if (piece.color === currentTurn) score += value;
       else score -= value;
+    }
+  }
+  
+  // Development bonus: encourage piece development in the opening
+  const myDev = countDevelopment(board, currentTurn);
+  const oppDev = countDevelopment(board, oppColor);
+  score += (myDev - oppDev) * DEV_BONUS;
+  
+  // Cannon forward penalty: penalize cannons that have moved forward into
+  // no-man's land (rows 4-5 for red, rows 4-5 for black) on the flanks.
+  // Cannons are strongest on the back rank controlling through screens.
+  // This prevents the AI from making aimless cannon pushes in the opening.
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (!piece || piece.type !== 'cannon') continue;
+      
+      // Check if cannon is in "no man's land" - forward but not on a useful file
+      if (piece.color === 'red') {
+        // Red cannon in rows 4-6 (forward of back rank but not deep) on edge files
+        if (row >= 3 && row <= 6 && (col <= 1 || col >= 7)) {
+          const penalty = 15;
+          if (piece.color === currentTurn) score -= penalty;
+          else score += penalty;
+        }
+      } else {
+        // Black cannon in rows 3-6 on edge files
+        if (row >= 3 && row <= 6 && (col <= 1 || col >= 7)) {
+          const penalty = 15;
+          if (piece.color === currentTurn) score -= penalty;
+          else score += penalty;
+        }
+      }
     }
   }
   
@@ -815,7 +881,7 @@ export interface AIMove {
 
 export type ProgressCallback = (depth: number, nodes: number, elapsed: number) => void;
 
-export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty, onProgress?: ProgressCallback, positionHashes?: number[]): AIMove | null {
+export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Difficulty, onProgress?: ProgressCallback, positionHashes?: number[], moveHistory?: { from: Position; to: Position }[]): AIMove | null {
   const maxDepth = DEPTH_MAP[difficulty];
   timeLimit = TIME_LIMIT[difficulty];
   startTime = Date.now();
@@ -824,10 +890,52 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   // Set position history for repetition detection
   gamePositionHashes = positionHashes || [];
 
-  const allMoves = getAllValidMovesFast(board, aiColor);
+  // Opening book lookup within the search engine (backup for frontend lookup)
+  if (moveHistory && difficulty !== 'easy') {
+    const bookMove = lookupOpeningBookInternal(moveHistory, aiColor);
+    if (bookMove) {
+      return { from: bookMove.from, to: bookMove.to, score: 0, searchDepth: 0, nodesSearched: 0 };
+    }
+  }
+
+  let allMoves = getAllValidMovesFast(board, aiColor);
   if (allMoves.length === 0) return null;
   if (allMoves.length === 1) {
     return { from: allMoves[0].from, to: allMoves[0].to, score: 0, searchDepth: 1, nodesSearched: 1 };
+  }
+
+  // Opening move filter: in the first few moves, filter out obviously bad moves
+  // to prevent the search engine from choosing non-standard openings.
+  // This only applies when no opening book match was found.
+  if (moveCounter <= 3 && difficulty !== 'easy') {
+    const filtered = allMoves.filter(m => {
+      const piece = board[m.from.row][m.from.col];
+      if (!piece) return true;
+      
+      // Filter out aimless cannon forward pushes (not to central files 3-5)
+      if (piece.type === 'cannon') {
+        const isForward = piece.color === 'red' 
+          ? m.to.row < m.from.row  // Red cannon moving up
+          : m.to.row > m.from.row; // Black cannon moving down
+        const isSameCol = m.to.col === m.from.col;
+        const isEdgeFile = m.to.col <= 1 || m.to.col >= 7;
+        
+        // Block: cannon pushes forward on the same column (not a lateral move)
+        if (isForward && isSameCol && isEdgeFile) return false;
+      }
+      
+      // Filter out edge horse moves (horse to col 0 or col 8)
+      if (piece.type === 'horse') {
+        if (m.to.col === 0 || m.to.col === 8) return false;
+      }
+      
+      return true;
+    });
+    
+    // Only use filtered list if it still has reasonable options
+    if (filtered.length >= 3) {
+      allMoves = filtered;
+    }
   }
 
   // Compute initial hash
@@ -1008,12 +1116,13 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     return topMoves[Math.floor(Math.random() * topMoves.length)];
   }
 
-  // Randomization in opening only
-  const maxRandomMoves = difficulty === 'hard' ? 3 : 6;
-  if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0 && moveCounter <= maxRandomMoves) {
+  // Randomization in opening only — hard mode always picks the best move
+  // Medium mode has slight randomization for variety
+  const maxRandomMoves = difficulty === 'hard' ? 0 : (difficulty === 'medium' ? 4 : 6);
+  if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0 && moveCounter <= maxRandomMoves && difficulty !== 'hard') {
     const bestScore = bestMove.score;
     if (Math.abs(bestScore) < 300) {
-      const RANDOMIZE_THRESHOLD = moveCounter <= 3 ? 20 : 10;
+      const RANDOMIZE_THRESHOLD = difficulty === 'medium' ? 8 : 15;
 
       const candidateMoves: AIMove[] = [];
       const oppColor = aiColor === 'red' ? 'black' : 'red';

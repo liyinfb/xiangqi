@@ -8,6 +8,7 @@ export interface AIWorkerRequest {
   aiColor: PieceColor;
   difficulty: Difficulty;
   positionHashes?: number[];
+  moveHistory?: { from: { row: number; col: number }; to: { row: number; col: number } }[];
 }
 
 export interface AIWorkerResponse {
@@ -24,7 +25,7 @@ export interface AIWorkerProgress {
 }
 
 self.onmessage = (e: MessageEvent<AIWorkerRequest & { requestId?: number; moveNumber?: number; isNewGame?: boolean }>) => {
-  const { board, aiColor, difficulty, requestId, isNewGame, positionHashes } = e.data;
+  const { board, aiColor, difficulty, requestId, isNewGame, positionHashes, moveHistory } = e.data;
   const start = Date.now();
   
   // Reset move counter if this is a new game
@@ -43,7 +44,7 @@ self.onmessage = (e: MessageEvent<AIWorkerRequest & { requestId?: number; moveNu
     });
   };
   
-  const move = getBestMove(board, aiColor, difficulty, onProgress, positionHashes);
+  const move = getBestMove(board, aiColor, difficulty, onProgress, positionHashes, moveHistory);
   
   const response = {
     type: 'result',

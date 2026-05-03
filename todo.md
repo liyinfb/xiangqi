@@ -65,3 +65,13 @@
 - [x] Bug: AI (black) places cannon where red chariot can capture it — 送子 blunder (IMG_5506.PNG screenshot)
   - Fixed: Added hanging piece penalty to evaluation function (40% penalty for undefended attacked pieces)
   - Fixed: Added safety filter in opening randomization to exclude moves that hang pieces
+- [x] Bug: AI opening moves are not rational/optimal — not choosing the best moves in the opening phase
+  - Fixed: Integrated opening book into getBestMove search engine (backup for frontend lookup)
+  - Fixed: Added moveHistory parameter to worker for opening book access
+  - Fixed: Expanded opening book with 10+ new entries for non-standard red first moves
+  - Fixed: Added development bonus to evaluation (reward piece development from starting positions)
+  - Fixed: Improved cannon position table to favor central control over aimless forward moves
+  - Fixed: Hard mode uses no randomization (always picks best move)
+  - Fixed: Added opening move filter to block aimless cannon pushes and edge horse moves
+  - Fixed: Added cannon forward penalty in evaluation for cannons on edge files in no-man's land
+  - Verified: 34 tests passing across 7 test suites (tactical, comprehensive, hanging piece, repetition, opening book, opening quality, basic)

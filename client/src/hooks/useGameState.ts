@@ -406,6 +406,7 @@ export function useGameState() {
         requestId: currentRequestId,
         isNewGame: isNewGameRef.current,
         positionHashes: positionHashesRef.current,
+        moveHistory: moveHistoryRef.current,
       };
       isNewGameRef.current = false;
       workerRef.current.postMessage(request);
@@ -413,7 +414,7 @@ export function useGameState() {
       // Fallback: run in main thread if worker not available
       import('../lib/ai').then(({ getBestMove }) => {
         if (requestIdRef.current !== currentRequestId) return;
-        const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current, undefined, positionHashesRef.current);
+        const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current, undefined, positionHashesRef.current, moveHistoryRef.current);
         if (thinkingTimerRef.current) {
           clearInterval(thinkingTimerRef.current);
           thinkingTimerRef.current = null;

@@ -160,6 +160,106 @@ addSymmetric('7,7->7,5', {
   weights: [35, 35, 30],
 });
 
+// --- Red: 炮二进二 (non-standard) (7,7)->(5,7) ---
+addSymmetric('7,7->5,7', {
+  moves: [
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+  ],
+  weights: [35, 35, 30],
+});
+
+// --- Red: 炮二进一 (7,7)->(6,7) ---
+addSymmetric('7,7->6,7', {
+  moves: [
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+  ],
+  weights: [35, 35, 30],
+});
+
+// --- Red: 兵一进一 (6,8)->(5,8) ---
+addSymmetric('6,8->5,8', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(3, 2), to: pos(4, 2), name: '进卒 (卒七进一)' },
+  ],
+  weights: [40, 35, 25],
+});
+
+// --- Red: 兵五进一 (6,4)->(5,4) ---
+addSymmetric('6,4->5,4', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [40, 30, 30],
+});
+
+// --- Red: 仕四进五 (9,5)->(8,4) ---
+addSymmetric('9,5->8,4', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [40, 30, 30],
+});
+
+// --- Red: 車一进一 (9,8)->(8,8) ---
+addSymmetric('9,8->8,8', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [35, 35, 30],
+});
+
+// --- Red: 炮二平七 (7,7)->(7,2) ---
+addSymmetric('7,7->7,2', {
+  moves: [
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [35, 35, 30],
+});
+
+// --- Red: 炮二平一 (7,7)->(7,8) ---
+addSymmetric('7,7->7,8', {
+  moves: [
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [35, 35, 30],
+});
+
+// --- Red: 相七进九 (9,2)->(7,0) ---
+addSymmetric('9,2->7,0', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [40, 30, 30],
+});
+
+// --- Red: 马二进一 (edge horse) (9,7)->(7,8) ---
+addSymmetric('9,7->7,8', {
+  moves: [
+    { from: pos(2, 1), to: pos(2, 4), name: '中炮 (砲八平五)' },
+    { from: pos(0, 1), to: pos(2, 2), name: '起马 (马8进7)' },
+    { from: pos(0, 7), to: pos(2, 6), name: '起马 (马2进3)' },
+  ],
+  weights: [40, 30, 30],
+});
+
 // ============================================================
 // LEVEL 2: AI AS RED responds after Red1 + Black1 (2 half-moves)
 // ============================================================

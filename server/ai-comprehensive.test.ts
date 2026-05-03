@@ -230,13 +230,10 @@ describe("Comprehensive AI Strength Tests", () => {
     ]);
     
     // Run AI 3 times - should always pick the same move (no randomization in midgame)
-    // moveCounter increments with each getBestMove call, so after a few calls
-    // it will be past the opening randomization threshold (>3 for hard mode)
+    // Hard mode has no randomization at all, so with clean state each run should be identical
     const moves: string[] = [];
     for (let i = 0; i < 3; i++) {
-      ttClear();
-      // Don't reset moveCounter - let it stay high to simulate midgame
-      // (moveCounter > 3 means no randomization for hard mode)
+      resetSearchState();
       const move = getBestMove(board, 'black', 'hard');
       const key = `${move!.from.row},${move!.from.col}->${move!.to.row},${move!.to.col}`;
       moves.push(key);

@@ -84,17 +84,21 @@ export const POSITION_BONUS: Record<PieceType, number[][]> = {
     [0, 0, 0, 1, 1, 1, 0, 0, 0],
     [0, 0, 0, 1, 1, 1, 0, 0, 0],
   ],
+  // Cannon position table: strongly favors back-rank central positions (中炮, 士角炮, 过宫炮)
+  // Cannon is strongest behind the lines controlling the board through screens.
+  // Forward cannon moves without purpose are penalized. Central control is key.
+  // Values are multiplied by 5 in EVAL_TABLE, so differences are significant.
   cannon: [
-    [0, 0, 1, 1, 1, 1, 1, 0, 0],
-    [0, 0, 1, 1, 1, 1, 1, 0, 0],
-    [0, 1, 2, 2, 3, 2, 2, 1, 0],
-    [0, 1, 2, 3, 3, 3, 2, 1, 0],
-    [1, 2, 3, 4, 4, 4, 3, 2, 1],
-    [1, 2, 3, 4, 4, 4, 3, 2, 1],
-    [0, 1, 2, 3, 3, 3, 2, 1, 0],
-    [0, 1, 2, 2, 3, 2, 2, 1, 0],
-    [0, 0, 1, 1, 1, 1, 1, 0, 0],
-    [0, 0, 1, 1, 1, 1, 1, 0, 0],
+    [0, 0, 1, 3, 3, 3, 1, 0, 0],  // row 0: opponent's back rank - sinking cannon
+    [0, 0, 1, 3, 3, 3, 1, 0, 0],  // row 1: deep penetration
+    [0, 1, 3, 5, 7, 5, 3, 1, 0],  // row 2: own back rank (for black) - central is best
+    [0, 1, 2, 4, 5, 4, 2, 1, 0],  // row 3: behind pawns - good with screens
+    [0, 0, 1, 3, 4, 3, 1, 0, 0],  // row 4: river line - less screens available
+    [0, 0, 1, 3, 4, 3, 1, 0, 0],  // row 5: river line - less screens available
+    [0, 1, 2, 4, 5, 4, 2, 1, 0],  // row 6: behind own pawns - good with screens
+    [0, 1, 3, 5, 7, 5, 3, 1, 0],  // row 7: own back rank (for red) - central is best
+    [0, 0, 1, 3, 3, 3, 1, 0, 0],  // row 8: near back row
+    [0, 0, 1, 3, 3, 3, 1, 0, 0],  // row 9: back row
   ],
   soldier: [
     [0, 0, 0, 0, 0, 0, 0, 0, 0],
