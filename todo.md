@@ -116,3 +116,10 @@
 - [x] Add tooltip/help text in stats panel explaining why depth varies by position and hardware
 - [x] Adjust difficulty time limits: Easy 2s→0.5s, Medium 5s→3s, Hard 8s→10s for better differentiation
 - [x] Update UI time limit display in GameInfoPanel to match new values
+- [x] Improve hard mode AI intelligence within same time budget
+  - Merged 5 board scans into 1 in evaluation (PST + development + cannon penalty + piece tracking)
+  - Shared static eval across razoring/RFP/futility (eliminated 2 redundant evaluateForSide calls per node)
+  - Removed expensive hanging piece detection (isSquareAttacked per piece was ~40% of eval time)
+  - Replaced linear isRepetition scan with O(1) Map lookup (fixed critical bug: Map version was treating current node as repetition)
+  - Restored proper null move material check (replaced broken staticEval proxy with actual piece scan)
+  - Results: Hard opening depth 10→12 (+2), NPS 58K→105K (+79%), Hard midgame depth 12→13 (+1), NPS 65K→122K (+86%)

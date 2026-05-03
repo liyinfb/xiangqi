@@ -188,7 +188,9 @@ export function resetSearchState(): void {
   killerTo2.fill(-1);
   counterMoves.fill(-1);
   gamePositionHashes = [];
+  gamePositionHashCounts.clear();
   searchPathHashes = [];
+  searchPathHashSet.clear();
   moveCounter = 0;
 }
 
@@ -276,181 +278,113 @@ function evaluateForSide(board: Board, currentTurn: PieceColor): number {
   let score = 0;
   const oppColor = currentTurn === 'red' ? 'black' : 'red';
   
+  // Single combined board scan: PST scoring + development + cannon penalty + piece tracking
+  let myDev = 0, oppDev = 0;
+  let myKingRow = -1, myKingCol = -1, oppKingRow = -1, oppKingCol = -1;
+  let myC1r = -1, myC1c = -1, myC2r = -1, myC2c = -1;
+  let opC1r = -1, opC1c = -1, opC2r = -1, opC2c = -1;
+  let mySoldierCols = 0, opSoldierCols = 0;
+  
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
-      const piece = board[row][col];
-      if (!piece) continue;
-      const ti = PIECE_TYPE_INDEX[piece.type];
+      const p = board[row][col];
+      if (!p) continue;
+      const isMine = p.color === currentTurn;
+      
+      // PST scoring
+      const ti = PIECE_TYPE_INDEX[p.type];
       const sq = row * 9 + col;
-      const value = piece.color === 'red'
-        ? EVAL_FLAT_RED[ti * 90 + sq]
-        : EVAL_FLAT_BLACK[ti * 90 + sq];
-      if (piece.color === currentTurn) score += value;
-      else score -= value;
+      const value = p.color === 'red' ? EVAL_FLAT_RED[ti * 90 + sq] : EVAL_FLAT_BLACK[ti * 90 + sq];
+      if (isMine) score += value; else score -= value;
+      
+      // Secondary eval per piece type
+      switch (p.type) {
+        case 'general':
+          if (isMine) { myKingRow = row; myKingCol = col; }
+          else { oppKingRow = row; oppKingCol = col; }
+          break;
+        case 'horse': {
+          // Development: horse NOT on starting square
+          const isStart = p.color === 'red'
+            ? ((row === 9 && col === 1) || (row === 9 && col === 7))
+            : ((row === 0 && col === 1) || (row === 0 && col === 7));
+          if (!isStart) { if (isMine) myDev++; else oppDev++; }
+          break;
+        }
+        case 'cannon': {
+          // Development: cannon NOT on starting square
+          const isStart = p.color === 'red'
+            ? ((row === 7 && col === 1) || (row === 7 && col === 7))
+            : ((row === 2 && col === 1) || (row === 2 && col === 7));
+          if (!isStart) { if (isMine) myDev++; else oppDev++; }
+          // Penalize cannons on edge files in no-man's land
+          if (row >= 3 && row <= 6 && (col <= 1 || col >= 7)) {
+            if (isMine) score -= 15; else score += 15;
+          }
+          break;
+        }
+        case 'chariot': {
+          // Development: chariot NOT on starting square
+          const isStart = p.color === 'red'
+            ? ((row === 9 && col === 0) || (row === 9 && col === 8))
+            : ((row === 0 && col === 0) || (row === 0 && col === 8));
+          if (!isStart) { if (isMine) myDev++; else oppDev++; }
+          if (isMine) {
+            if (myC1r < 0) { myC1r = row; myC1c = col; } else { myC2r = row; myC2c = col; }
+          } else {
+            if (opC1r < 0) { opC1r = row; opC1c = col; } else { opC2r = row; opC2c = col; }
+          }
+          break;
+        }
+        case 'soldier':
+          if (isMine) mySoldierCols |= (1 << col); else opSoldierCols |= (1 << col);
+          break;
+      }
     }
   }
   
-  // Development bonus: encourage piece development in the opening
-  const myDev = countDevelopment(board, currentTurn);
-  const oppDev = countDevelopment(board, oppColor);
+  // Development bonus
   score += (myDev - oppDev) * DEV_BONUS;
   
-  // Cannon forward penalty: penalize cannons that have moved forward into
-  // no-man's land (rows 4-5 for red, rows 4-5 for black) on the flanks.
-  // Cannons are strongest on the back rank controlling through screens.
-  // This prevents the AI from making aimless cannon pushes in the opening.
-  for (let row = 0; row <= 9; row++) {
-    for (let col = 0; col <= 8; col++) {
-      const piece = board[row][col];
-      if (!piece || piece.type !== 'cannon') continue;
-      
-      // Check if cannon is in "no man's land" - forward but not on a useful file
-      if (piece.color === 'red') {
-        // Red cannon in rows 4-6 (forward of back rank but not deep) on edge files
-        if (row >= 3 && row <= 6 && (col <= 1 || col >= 7)) {
-          const penalty = 15;
-          if (piece.color === currentTurn) score -= penalty;
-          else score += penalty;
-        }
-      } else {
-        // Black cannon in rows 3-6 on edge files
-        if (row >= 3 && row <= 6 && (col <= 1 || col >= 7)) {
-          const penalty = 15;
-          if (piece.color === currentTurn) score -= penalty;
-          else score += penalty;
-        }
-      }
-    }
-  }
-  
-  // Hanging piece penalty: penalize pieces that are attacked by the opponent
-  // Only check major pieces (chariot, cannon, horse) to keep evaluation fast
-  for (let row = 0; row <= 9; row++) {
-    for (let col = 0; col <= 8; col++) {
-      const piece = board[row][col];
-      if (!piece) continue;
-      // Only check valuable pieces (skip soldiers, advisors, elephants for speed)
-      if (piece.type !== 'chariot' && piece.type !== 'cannon' && piece.type !== 'horse') continue;
-      
-      const pieceVal = EVAL_PIECE_VALUES[piece.type];
-      const attackedBy = piece.color === currentTurn ? oppColor : currentTurn;
-      
-      if (isSquareAttacked(board, row, col, attackedBy)) {
-        const defendedBy = piece.color;
-        const isDefended = isSquareAttacked(board, row, col, defendedBy);
-        
-        if (!isDefended) {
-          const penalty = Math.floor(pieceVal * HANGING_PENALTY_FRACTION);
-          if (piece.color === currentTurn) score -= penalty;
-          else score += penalty;
-        } else {
-          const penalty = Math.floor(pieceVal * ATTACKED_DEFENDED_PENALTY_FRACTION);
-          if (piece.color === currentTurn) score -= penalty;
-          else score += penalty;
-        }
-      }
-    }
-  }
-  
-  // ---- King Safety ----
-  // Reward having advisors and elephants near the general (palace defense)
-  let myKingSafety = 0;
-  let oppKingSafety = 0;
-  
-  // Find generals
-  let myKingRow = -1, myKingCol = -1, oppKingRow = -1, oppKingCol = -1;
-  for (let row = 0; row <= 9; row++) {
-    for (let col = 3; col <= 5; col++) {
-      const p = board[row][col];
-      if (p && p.type === 'general') {
-        if (p.color === currentTurn) { myKingRow = row; myKingCol = col; }
-        else { oppKingRow = row; oppKingCol = col; }
-      }
-    }
-  }
-  
-  // Count defenders around each general
+  // King safety: check adjacent squares for defenders
   if (myKingRow >= 0) {
-    const kRow = myKingRow, kCol = myKingCol;
-    // Check adjacent squares for advisors/elephants
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         if (dr === 0 && dc === 0) continue;
-        const r = kRow + dr, c = kCol + dc;
-        if (r < 0 || r > 9 || c < 0 || c > 8) continue;
-        const p = board[r][c];
-        if (p && p.color === currentTurn && (p.type === 'advisor' || p.type === 'elephant')) {
-          myKingSafety += 8;
+        const r = myKingRow + dr, c = myKingCol + dc;
+        if (r >= 0 && r <= 9 && c >= 0 && c <= 8) {
+          const p = board[r][c];
+          if (p && p.color === currentTurn && (p.type === 'advisor' || p.type === 'elephant')) {
+            score += 8;
+          }
         }
       }
     }
   }
   if (oppKingRow >= 0) {
-    const kRow = oppKingRow, kCol = oppKingCol;
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         if (dr === 0 && dc === 0) continue;
-        const r = kRow + dr, c = kCol + dc;
-        if (r < 0 || r > 9 || c < 0 || c > 8) continue;
-        const p = board[r][c];
-        if (p && p.color === oppColor && (p.type === 'advisor' || p.type === 'elephant')) {
-          oppKingSafety += 8;
+        const r = oppKingRow + dr, c = oppKingCol + dc;
+        if (r >= 0 && r <= 9 && c >= 0 && c <= 8) {
+          const p = board[r][c];
+          if (p && p.color === oppColor && (p.type === 'advisor' || p.type === 'elephant')) {
+            score -= 8;
+          }
         }
       }
     }
   }
-  score += myKingSafety - oppKingSafety;
   
-  // ---- Piece Coordination: Chariot on open file ----
-  // Reward chariots that are on files with no friendly pawns blocking them
-  for (let row = 0; row <= 9; row++) {
-    for (let col = 0; col <= 8; col++) {
-      const piece = board[row][col];
-      if (!piece || piece.type !== 'chariot') continue;
-      
-      // Check if the file (column) is open (no friendly soldiers on it)
-      let fileBlocked = false;
-      for (let r = 0; r <= 9; r++) {
-        if (r === row) continue;
-        const p = board[r][col];
-        if (p && p.color === piece.color && p.type === 'soldier') {
-          fileBlocked = true;
-          break;
-        }
-      }
-      
-      if (!fileBlocked) {
-        const bonus = 12; // Open file bonus for chariot
-        if (piece.color === currentTurn) score += bonus;
-        else score -= bonus;
-      }
-    }
-  }
+  // Chariot open file bonus (use soldier bitmask for O(1) check)
+  if (myC1r >= 0 && !(mySoldierCols & (1 << myC1c))) score += 12;
+  if (myC2r >= 0 && !(mySoldierCols & (1 << myC2c))) score += 12;
+  if (opC1r >= 0 && !(opSoldierCols & (1 << opC1c))) score -= 12;
+  if (opC2r >= 0 && !(opSoldierCols & (1 << opC2c))) score -= 12;
   
-  // ---- Piece Coordination: Connected chariots ----
-  // Reward two chariots of the same color on the same rank or file with nothing between
-  // (simplified: just check if both chariots exist and are on same rank/file)
-  let myChariots: { row: number; col: number }[] = [];
-  let oppChariots: { row: number; col: number }[] = [];
-  for (let row = 0; row <= 9; row++) {
-    for (let col = 0; col <= 8; col++) {
-      const p = board[row][col];
-      if (p && p.type === 'chariot') {
-        if (p.color === currentTurn) myChariots.push({ row, col });
-        else oppChariots.push({ row, col });
-      }
-    }
-  }
-  if (myChariots.length === 2) {
-    if (myChariots[0].row === myChariots[1].row || myChariots[0].col === myChariots[1].col) {
-      score += 15; // Connected chariots bonus
-    }
-  }
-  if (oppChariots.length === 2) {
-    if (oppChariots[0].row === oppChariots[1].row || oppChariots[0].col === oppChariots[1].col) {
-      score -= 15;
-    }
-  }
+  // Connected chariots bonus
+  if (myC2r >= 0 && (myC1r === myC2r || myC1c === myC2c)) score += 15;
+  if (opC2r >= 0 && (opC1r === opC2r || opC1c === opC2c)) score -= 15;
   
   return score;
 }
@@ -717,21 +651,27 @@ let timeLimit = 0;
 
 // Position history for repetition detection
 let gamePositionHashes: number[] = [];
+let gamePositionHashCounts: Map<number, number> = new Map();
 let searchPathHashes: number[] = [];
+let searchPathHashSet: Map<number, number> = new Map(); // hash -> count in search path
+
+function buildGameHashCounts() {
+  gamePositionHashCounts.clear();
+  for (let i = 0; i < gamePositionHashes.length; i++) {
+    const h = gamePositionHashes[i];
+    gamePositionHashCounts.set(h, (gamePositionHashCounts.get(h) || 0) + 1);
+  }
+}
 
 function isRepetition(hash: number): boolean {
-  // Check in game history
-  let count = 0;
-  for (let i = 0; i < gamePositionHashes.length; i++) {
-    if (gamePositionHashes[i] === hash) {
-      count++;
-      if (count >= 2) return true;
-    }
-  }
-  // Check in current search path
-  for (let i = 0; i < searchPathHashes.length - 1; i++) {
-    if (searchPathHashes[i] === hash) return true;
-  }
+  // Check in game history (O(1) lookup)
+  const gameCount = gamePositionHashCounts.get(hash) || 0;
+  if (gameCount >= 2) return true;
+  // Check in current search path (O(1) lookup)
+  // The current node's hash is already in the set (count=1), so we need count >= 2
+  // to detect an actual repetition (same position appeared earlier in the search path)
+  const searchCount = searchPathHashSet.get(hash) || 0;
+  if (searchCount >= 2) return true;
   return false;
 }
 
@@ -902,9 +842,21 @@ function pvs(
 
   const isPV = beta - alpha > 1;
 
+  // Compute static eval ONCE for all pruning heuristics (razoring, RFP, futility)
+  // Only needed for non-PV, non-check nodes
+  const needStaticEval = !isPV && !inCheck && ply > 0;
+  const staticEval = needStaticEval ? evaluateForSide(board, currentTurn) : 0;
+
+  // Reverse Futility Pruning (Static Null Move Pruning) - check BEFORE null move for speed
+  if (needStaticEval && depth <= 6) {
+    const rfpMargin = depth * 120;
+    if (staticEval - rfpMargin >= beta) {
+      return staticEval;
+    }
+  }
+
   // Razoring
-  if (!isPV && !inCheck && depth <= 3 && ply > 0) {
-    const staticEval = evaluateForSide(board, currentTurn);
+  if (needStaticEval && depth <= 3) {
     if (staticEval + RAZOR_MARGIN < alpha) {
       const qScore = quiescence(board, alpha, beta, currentTurn, hash, 6);
       if (qScore < alpha) return qScore;
@@ -913,20 +865,20 @@ function pvs(
 
   // Null Move Pruning
   if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0 && !isPV) {
-    let hasMaterial = false;
-    for (let r = 0; r <= 9; r++) {
+    // Quick material check: scan for at least one major piece (chariot/cannon/horse)
+    let hasMajor = false;
+    outer: for (let r = 0; r <= 9; r++) {
       for (let c = 0; c <= 8; c++) {
         const p = board[r][c];
         if (p && p.color === currentTurn) {
           const t = p.type;
           if (t === 'chariot' || t === 'cannon' || t === 'horse') {
-            hasMaterial = true; r = 10; break;
+            hasMajor = true; break outer;
           }
         }
       }
     }
-
-    if (hasMaterial) {
+    if (hasMajor) {
       const R = depth >= 8 ? 4 : depth >= 6 ? 3 : 2;
       const nextTurn = currentTurn === 'red' ? 'black' : 'red';
       const nullHash = hash ^ ZOBRIST_TURN;
@@ -935,17 +887,6 @@ function pvs(
 
       if (searchAborted) return 0;
       if (nullScore >= beta) return beta;
-    }
-  }
-
-  // Reverse Futility Pruning (Static Null Move Pruning)
-  // If our position is so good that even after giving a margin, we're still above beta,
-  // we can prune this node without searching.
-  if (!isPV && !inCheck && depth <= 6 && ply > 0) {
-    const rfpEval = evaluateForSide(board, currentTurn);
-    const rfpMargin = depth * 120; // ~120 per depth
-    if (rfpEval - rfpMargin >= beta) {
-      return rfpEval;
     }
   }
 
@@ -971,8 +912,8 @@ function pvs(
     return 0;
   }
 
-  // Static eval for futility and LMP
-  const staticEvalForFutility = (!inCheck && depth <= 6) ? evaluateForSide(board, currentTurn) : 0;
+  // Reuse staticEval computed above for futility pruning
+  const staticEvalForFutility = needStaticEval ? staticEval : 0;
 
   // Sort moves
   const scoredMoves = generateScoredMoves(board, allMoves, ply, iidMove);
@@ -1019,6 +960,7 @@ function pvs(
 
     // Track position in search path
     searchPathHashes.push(newHash);
+    searchPathHashSet.set(newHash, (searchPathHashSet.get(newHash) || 0) + 1);
 
     // Update previous move for counter move heuristic
     prevMoveFrom = posIdx(sm.fromRow, sm.fromCol);
@@ -1077,6 +1019,9 @@ function pvs(
 
     // Remove from search path
     searchPathHashes.pop();
+    const _spc = searchPathHashSet.get(newHash)!;
+    if (_spc <= 1) searchPathHashSet.delete(newHash);
+    else searchPathHashSet.set(newHash, _spc - 1);
 
     // Restore previous move
     prevMoveFrom = savedPrevFrom;
@@ -1157,6 +1102,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
   // Set position history for repetition detection
   gamePositionHashes = positionHashes || [];
+  buildGameHashCounts();
 
   // Opening book lookup within the search engine (backup for frontend lookup)
   if (moveHistory) {
@@ -1274,6 +1220,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     searchAborted = false;
     nodesSearched = 0;
     searchPathHashes = [];
+    searchPathHashSet.clear();
     prevMoveFrom = -1;
     prevMoveTo = -1;
     const depthStartTime = Date.now();
@@ -1307,6 +1254,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         const newHash = updateHash(rootHash, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
 
         searchPathHashes.push(newHash);
+        searchPathHashSet.set(newHash, (searchPathHashSet.get(newHash) || 0) + 1);
         prevMoveFrom = posIdx(sm.fromRow, sm.fromCol);
         prevMoveTo = posIdx(sm.toRow, sm.toCol);
 
@@ -1327,6 +1275,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
         }
 
         searchPathHashes.pop();
+        { const _c = searchPathHashSet.get(newHash)!; if (_c <= 1) searchPathHashSet.delete(newHash); else searchPathHashSet.set(newHash, _c - 1); }
         prevMoveFrom = -1;
         prevMoveTo = -1;
         undoMoveInPlace(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, piece, captured);
