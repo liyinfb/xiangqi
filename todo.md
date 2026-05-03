@@ -75,3 +75,4 @@
   - Fixed: Added opening move filter to block aimless cannon pushes and edge horse moves
   - Fixed: Added cannon forward penalty in evaluation for cannons on edge files in no-man's land
   - Verified: 34 tests passing across 7 test suites (tactical, comprehensive, hanging piece, repetition, opening book, opening quality, basic)
+- [x] Unify all difficulty levels to use same AI logic (opening book, no randomization, opening filters), differentiated only by search time: easy < 2s, medium < 5s, hard = 8s

@@ -29,11 +29,11 @@ import { lookupOpeningBook as lookupOpeningBookInternal } from './openingBook';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
-// Depth settings
+// Depth settings - all difficulties use same max depth, differentiated by time limit only
 const DEPTH_MAP: Record<Difficulty, number> = {
-  easy: 3,
-  medium: 5,
-  hard: 30,  // Increased max depth (time-limited anyway)
+  easy: 30,
+  medium: 30,
+  hard: 30,
 };
 
 // Futility pruning margins indexed by depth
@@ -44,10 +44,10 @@ const RAZOR_MARGIN = 600;
 // Use finite bounds instead of Infinity to avoid JS arithmetic issues
 const INF = 300000;
 
-// Time limits per difficulty (ms)
+// Time limits per difficulty (ms) - the ONLY difference between difficulty levels
 const TIME_LIMIT: Record<Difficulty, number> = {
-  easy: 500,
-  medium: 3000,
+  easy: 2000,
+  medium: 5000,
   hard: 8000,
 };
 
@@ -891,7 +891,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   gamePositionHashes = positionHashes || [];
 
   // Opening book lookup within the search engine (backup for frontend lookup)
-  if (moveHistory && difficulty !== 'easy') {
+  if (moveHistory) {
     const bookMove = lookupOpeningBookInternal(moveHistory, aiColor);
     if (bookMove) {
       return { from: bookMove.from, to: bookMove.to, score: 0, searchDepth: 0, nodesSearched: 0 };
@@ -907,7 +907,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   // Opening move filter: in the first few moves, filter out obviously bad moves
   // to prevent the search engine from choosing non-standard openings.
   // This only applies when no opening book match was found.
-  if (moveCounter <= 3 && difficulty !== 'easy') {
+  if (moveCounter <= 3) {
     const filtered = allMoves.filter(m => {
       const piece = board[m.from.row][m.from.col];
       if (!piece) return true;
@@ -1102,63 +1102,8 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     prevDepthTime = depthTime;
   }
 
-  // For easy difficulty, sometimes pick a suboptimal move
-  if (difficulty === 'easy' && bestMove && Math.random() < 0.35) {
-    const scoredMoves: AIMove[] = allMoves.map(move => {
-      const piece = board[move.from.row][move.from.col]!;
-      const captured = makeMoveInPlace(board, move.from.row, move.from.col, move.to.row, move.to.col);
-      const score = evaluateBoard(board, aiColor);
-      undoMoveInPlace(board, move.from.row, move.from.col, move.to.row, move.to.col, piece, captured);
-      return { ...move, score, searchDepth: 1 };
-    });
-    scoredMoves.sort((a, b) => b.score - a.score);
-    const topMoves = scoredMoves.slice(0, Math.min(5, scoredMoves.length));
-    return topMoves[Math.floor(Math.random() * topMoves.length)];
-  }
-
-  // Randomization in opening only — hard mode always picks the best move
-  // Medium mode has slight randomization for variety
-  const maxRandomMoves = difficulty === 'hard' ? 0 : (difficulty === 'medium' ? 4 : 6);
-  if (bestMove && completedDepth >= 2 && rootMoveScores.size > 0 && moveCounter <= maxRandomMoves && difficulty !== 'hard') {
-    const bestScore = bestMove.score;
-    if (Math.abs(bestScore) < 300) {
-      const RANDOMIZE_THRESHOLD = difficulty === 'medium' ? 8 : 15;
-
-      const candidateMoves: AIMove[] = [];
-      const oppColor = aiColor === 'red' ? 'black' : 'red';
-      rootMoveScores.forEach((score, key) => {
-        if (Math.abs(score - bestScore) <= RANDOMIZE_THRESHOLD) {
-          const parts = key.split(',');
-          const fr = parseInt(parts[0]), fc = parseInt(parts[1]), tr = parseInt(parts[2]), tc = parseInt(parts[3]);
-          
-          // Safety check: don't include moves that hang a piece
-          const movedPiece = board[fr][fc];
-          if (movedPiece && movedPiece.type !== 'soldier') {
-            // Temporarily make the move to check if destination is attacked
-            const tempCaptured = makeMoveInPlace(board, fr, fc, tr, tc);
-            const isHanging = isSquareAttacked(board, tr, tc, oppColor) &&
-                             !isSquareAttacked(board, tr, tc, aiColor);
-            undoMoveInPlace(board, fr, fc, tr, tc, movedPiece, tempCaptured);
-            
-            // Skip moves that hang a valuable piece (net loss > captured value)
-            if (isHanging) {
-              const movedVal = EVAL_PIECE_VALUES[movedPiece.type];
-              const capturedVal = tempCaptured ? EVAL_PIECE_VALUES[tempCaptured.type] : 0;
-              if (movedVal > capturedVal + 100) return; // Skip this candidate
-            }
-          }
-          
-          candidateMoves.push({ from: { row: fr, col: fc }, to: { row: tr, col: tc }, score, searchDepth: completedDepth });
-        }
-      });
-
-      if (candidateMoves.length > 1) {
-        const chosen = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
-        chosen.nodesSearched = totalNodesSearched;
-        return chosen;
-      }
-    }
-  }
+  // All difficulty levels always pick the best move — no randomization
+  // Difficulty is differentiated solely by search time limit
 
   if (bestMove) {
     bestMove.searchDepth = completedDepth;
