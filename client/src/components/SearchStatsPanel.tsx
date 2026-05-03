@@ -211,6 +211,13 @@ export default function SearchStatsPanel({ stats, isThinking }: SearchStatsPanel
           </div>
         )}
 
+        {/* Depth explanation note */}
+        {summary && summary.searchMoves > 0 && (
+          <p className="text-[10px] text-muted-foreground/70 text-center leading-relaxed px-2">
+            搜索深度受局面复杂度、剩余棋子数和硬件速度影响，同一难度下不同局面深度可能差异较大
+          </p>
+        )}
+
         {/* Expandable History Table */}
         <div>
           <Button

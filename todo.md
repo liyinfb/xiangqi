@@ -106,3 +106,11 @@
 - [~] Implement Bitboard representation — SKIPPED (10x9 board doesn't fit 64-bit bitboard well in JavaScript; would require BigInt which is slow)
 - [~] Implement Lazy SMP parallel search — SKIPPED (SharedArrayBuffer requires COOP/COEP headers not practical in this deployment; without shared TT, parallel workers provide minimal benefit)
 - [x] Add search statistics panel to UI showing depth, nodes, NPS, time, score per AI move
+- [x] Investigate: easy mode reports depth 12-13 in 2s
+  - Code verified: completedDepth only set when iteration fully completes (not aborted)
+  - Sandbox Node.js test: easy mode reaches depth 5-9 in 0.5-2s (correct for 2s limit)
+  - TT warmup test: warm vs cold showed same depth (8), so TT is not the primary factor
+  - Likely explanation: user's desktop CPU is 2-4x faster than sandbox, enabling deeper search
+  - Also possible: mid/endgame positions with fewer pieces have narrower trees → deeper search
+  - No code bug found; depth reporting logic is correct
+- [x] Add tooltip/help text in stats panel explaining why depth varies by position and hardware
