@@ -123,3 +123,19 @@
   - Replaced linear isRepetition scan with O(1) Map lookup (fixed critical bug: Map version was treating current node as repetition)
   - Restored proper null move material check (replaced broken staticEval proxy with actual piece scan)
   - Results: Hard opening depth 10→12 (+2), NPS 58K→105K (+79%), Hard midgame depth 12→13 (+1), NPS 65K→122K (+86%)
+- [x] Further improve search depth within same time budget (safe optimizations only)
+  - Added Probcut (shallow search to predict fail-high at depth >= 7)
+  - Increased TT from 1M to 4M entries for better hit rate at deep searches
+  - More aggressive LMR (0.5→0.65 factor) + extra reduction for very late moves
+  - Tighter LMP thresholds, RFP extended to depth 8, futility extended to depth 6
+  - History-based pruning for quiet moves with very bad history scores
+  - SEE pruning extended to depth 8, bad capture LMR increased to 2
+  - Null move reduction increased to depth/4 + 3
+  - Opening: depth 12→15 (+3 layers, 8.8s), Midgame: depth 12 (4.4s, stable)
+  - All 31 tactical/safety tests pass with 0 regressions, 0 blunders in self-play
+- [~] Midgame depth 20 in 20s — NOT ACHIEVABLE with current architecture
+  - Measured: midgame depth 12 in 4.4s, depth 13 would need ~22s (branching factor ~5.2x)
+  - Extrapolated: depth 20 would require hours, not seconds
+  - Root cause: Xiangqi midgame has ~44 legal moves per position, much wider than chess (~30)
+  - Would require NNUE neural network evaluation (like Stockfish) to replace handcrafted eval
+  - NNUE reduces effective branching factor by providing more accurate evaluations for pruning

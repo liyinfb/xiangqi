@@ -121,7 +121,7 @@ const TT_UPPERBOUND = 2;
 // Flat array TT for better cache performance
 // Each entry: [hash, depth, score, flag, fromRow, fromCol, toRow, toCol, age]
 // Using typed arrays for compactness
-const TT_SIZE = 1 << 20; // ~1M entries
+const TT_SIZE = 1 << 22; // ~4M entries
 const TT_MASK = TT_SIZE - 1;
 const TT_FIELDS = 9;
 const ttData = new Int32Array(TT_SIZE * TT_FIELDS);
@@ -435,12 +435,12 @@ function isKiller(fromRow: number, fromCol: number, toRow: number, toCol: number
     (killerFrom2[ply] === fi && killerTo2[ply] === ti);
 }
 
-// Pre-computed LMR reduction table
+// Pre-computed LMR reduction table - more aggressive (0.6 factor) for deeper search
 const LMR_TABLE = new Uint8Array(64 * 64);
 function initLMR() {
   for (let d = 1; d < 64; d++) {
     for (let m = 1; m < 64; m++) {
-      LMR_TABLE[d * 64 + m] = Math.max(1, Math.min(Math.floor(Math.log(d) * Math.log(m) * 0.5), d - 1));
+      LMR_TABLE[d * 64 + m] = Math.max(1, Math.min(Math.floor(Math.log(d) * Math.log(m) * 0.65), d - 1));
     }
   }
 }
@@ -783,7 +783,8 @@ function quiescence(
 // ==================== Principal Variation Search (NegaMax) ====================
 
 // Late Move Pruning thresholds by depth
-const LMP_THRESHOLD = [0, 5, 8, 12, 16, 20, 24, 28];
+// More aggressive LMP thresholds - prune more quiet moves at low depths
+const LMP_THRESHOLD = [0, 4, 6, 10, 14, 18, 22, 26];
 
 function pvs(
   board: Board,
@@ -847,9 +848,9 @@ function pvs(
   const needStaticEval = !isPV && !inCheck && ply > 0;
   const staticEval = needStaticEval ? evaluateForSide(board, currentTurn) : 0;
 
-  // Reverse Futility Pruning (Static Null Move Pruning) - check BEFORE null move for speed
-  if (needStaticEval && depth <= 6) {
-    const rfpMargin = depth * 120;
+  // Reverse Futility Pruning (Static Null Move Pruning) - extended to depth <= 8
+  if (needStaticEval && depth <= 8) {
+    const rfpMargin = depth * 100;
     if (staticEval - rfpMargin >= beta) {
       return staticEval;
     }
@@ -863,7 +864,7 @@ function pvs(
     }
   }
 
-  // Null Move Pruning
+  // Null Move Pruning with deeper reduction
   if (nullMoveAllowed && !inCheck && depth >= 3 && ply > 0 && !isPV) {
     // Quick material check: scan for at least one major piece (chariot/cannon/horse)
     let hasMajor = false;
@@ -879,7 +880,8 @@ function pvs(
       }
     }
     if (hasMajor) {
-      const R = depth >= 8 ? 4 : depth >= 6 ? 3 : 2;
+      // More aggressive null move reduction: R = depth/4 + 3 (capped)
+      const R = Math.min(depth - 1, Math.floor(depth / 4) + 3);
       const nextTurn = currentTurn === 'red' ? 'black' : 'red';
       const nullHash = hash ^ ZOBRIST_TURN;
 
@@ -887,6 +889,26 @@ function pvs(
 
       if (searchAborted) return 0;
       if (nullScore >= beta) return beta;
+    }
+  }
+
+  // Probcut: at medium depths, use shallow search to predict fail-high
+  if (!isPV && !inCheck && depth >= 7 && ply > 0 && Math.abs(beta) < 100000) {
+    const probBeta = beta + 200;
+    const probDepth = depth - 4;
+    const probMoves = getCaptureMovesFast(board, currentTurn);
+    for (let pi = 0; pi < probMoves.length; pi++) {
+      const pm = probMoves[pi];
+      const pfr = pm.from.row, pfc = pm.from.col, ptr = pm.to.row, ptc = pm.to.col;
+      if (!seeGe(board, pfr, pfc, ptr, ptc, 0)) continue;
+      const pPiece = board[pfr][pfc]!;
+      const pCaptured = makeMoveInPlace(board, pfr, pfc, ptr, ptc);
+      const pHash = updateHash(hash, pfr, pfc, ptr, ptc, pPiece, pCaptured);
+      const nextT = currentTurn === 'red' ? 'black' : 'red';
+      const pScore = -pvs(board, probDepth, -probBeta, -probBeta + 1, nextT, pHash, ply + 1, false);
+      undoMoveInPlace(board, pfr, pfc, ptr, ptc, pPiece, pCaptured);
+      if (searchAborted) return 0;
+      if (pScore >= probBeta) return pScore;
     }
   }
 
@@ -937,18 +959,24 @@ function pvs(
 
     // Late Move Pruning (LMP): skip quiet late moves at low depths
     if (!isPV && !inCheck && depth <= 7 && movesSearched > 0 && !isCapture && !isTTMove) {
-      const lmpThresh = LMP_THRESHOLD[depth] || 28;
+      const lmpThresh = LMP_THRESHOLD[depth] || 26;
       if (movesSearched >= lmpThresh) continue;
     }
 
-    // Futility Pruning
-    if (!inCheck && depth <= 4 && movesSearched > 0 && !isCapture) {
+    // Futility Pruning - extended to depth <= 6
+    if (!isPV && !inCheck && depth <= 6 && movesSearched > 0 && !isCapture && !isTTMove) {
       const margin = FUTILITY_MARGIN[depth] || 950;
       if (staticEvalForFutility + margin < alpha) continue;
     }
 
+    // History-based pruning: skip quiet moves with very bad history at low depths
+    if (!isPV && !inCheck && depth <= 4 && movesSearched > 3 && !isCapture && !isTTMove) {
+      const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
+      if (historyScores[histIdx] < -(depth * depth * 64)) continue;
+    }
+
     // SEE-based pruning: skip captures with negative SEE at low depths (bad captures)
-    if (!isPV && !inCheck && isCapture && movesSearched > 0 && !isTTMove && depth <= 6) {
+    if (!isPV && !inCheck && isCapture && movesSearched > 0 && !isTTMove && depth <= 8) {
       if (!seeGe(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, 0)) {
         continue; // Losing capture, skip it
       }
@@ -989,14 +1017,17 @@ function pvs(
             }
             // Reduce more for moves with bad history
             const histIdx = posIdx(sm.fromRow, sm.fromCol) * 90 + posIdx(sm.toRow, sm.toCol);
-            if (historyScores[histIdx] < 0) {
+            if (historyScores[histIdx] < -32) {
+              reduction += 1;
+            }
+            // Extra reduction for very late moves
+            if (movesSearched >= 8) {
               reduction += 1;
             }
           } else {
             // For captures: reduce bad captures (negative SEE) more aggressively
-            // Good captures (positive SEE) get no reduction
             if (depth >= 4 && !seeGe(board, sm.fromRow, sm.fromCol, sm.toRow, sm.toCol, 0)) {
-              reduction = 1; // Mild reduction for bad captures that passed earlier pruning
+              reduction = 2; // Stronger reduction for bad captures
             }
           }
           // Reduce less in PV nodes
