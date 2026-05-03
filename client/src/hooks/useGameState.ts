@@ -29,6 +29,17 @@ export interface AIThinkingProgress {
   openingName?: string;
 }
 
+export interface SearchStats {
+  moveNumber: number;
+  depth: number;
+  nodes: number;
+  timeMs: number;
+  nps: number;
+  score: number;
+  isFromBook: boolean;
+  openingName?: string;
+}
+
 export interface GameState {
   board: Board;
   currentTurn: PieceColor;
@@ -69,6 +80,9 @@ export function useGameState() {
   
   // AI thinking progress state
   const [aiThinkingProgress, setAiThinkingProgress] = useState<AIThinkingProgress | null>(null);
+
+  // Search statistics history (per AI move)
+  const [searchStatsHistory, setSearchStatsHistory] = useState<SearchStats[]>([]);
 
   // Replay state: null = live mode, number = viewing historical step
   const [replayIndex, setReplayIndex] = useState<number | null>(null);
@@ -125,7 +139,7 @@ export function useGameState() {
       }
       
       // Handle final result
-      const { move: aiMove, requestId } = data;
+      const { move: aiMove, requestId, timeMs } = data;
       const currentBoard = pendingBoardRef.current;
       if (!currentBoard) return;
 
@@ -138,7 +152,7 @@ export function useGameState() {
         thinkingTimerRef.current = null;
       }
 
-      handleAIResponseFromWorker(currentBoard, aiMove);
+      handleAIResponseFromWorker(currentBoard, aiMove, timeMs);
     };
 
     return () => {
@@ -149,7 +163,7 @@ export function useGameState() {
     };
   }, []);
 
-  const handleAIResponseFromWorker = useCallback((currentBoard: Board, aiMove: AIMove | null) => {
+  const handleAIResponseFromWorker = useCallback((currentBoard: Board, aiMove: AIMove | null, timeMs?: number) => {
     const currentAiColor = playerColorRef.current === 'red' ? 'black' : 'red';
     const currentPlayerColor = playerColorRef.current;
 
@@ -227,6 +241,20 @@ export function useGameState() {
     // Store search metadata for display
     setAiSearchDepth(aiMove.searchDepth);
     setAiScore(aiMove.score);
+
+    // Record search statistics
+    const actualTimeMs = timeMs || 0;
+    const nodes = aiMove.nodesSearched || 0;
+    const nps = actualTimeMs > 0 ? Math.round(nodes / (actualTimeMs / 1000)) : 0;
+    setSearchStatsHistory(prev => [...prev, {
+      moveNumber: prev.length + 1,
+      depth: aiMove.searchDepth,
+      nodes,
+      timeMs: actualTimeMs,
+      nps,
+      score: aiMove.score,
+      isFromBook: aiMove.searchDepth === 0 && aiMove.score === 0,
+    }]);
 
     // Get AI explanation if enabled (use ref to get current value)
     if (aiExplanationEnabledRef.current) {
@@ -364,7 +392,7 @@ export function useGameState() {
             searchDepth: 0,
             nodesSearched: 0,
           };
-          handleAIResponseFromWorker(currentBoard, aiMove);
+          handleAIResponseFromWorker(currentBoard, aiMove, 0);
           
           // Set special metadata for book move
           setAiSearchDepth(0);
@@ -414,12 +442,14 @@ export function useGameState() {
       // Fallback: run in main thread if worker not available
       import('../lib/ai').then(({ getBestMove }) => {
         if (requestIdRef.current !== currentRequestId) return;
+        const fallbackStart = Date.now();
         const aiMove = getBestMove(currentBoard, currentAiColor, difficultyRef.current, undefined, positionHashesRef.current, moveHistoryRef.current);
+        const fallbackTimeMs = Date.now() - fallbackStart;
         if (thinkingTimerRef.current) {
           clearInterval(thinkingTimerRef.current);
           thinkingTimerRef.current = null;
         }
-        handleAIResponseFromWorker(currentBoard, aiMove);
+        handleAIResponseFromWorker(currentBoard, aiMove, fallbackTimeMs);
       });
     }
   }, [handleAIResponseFromWorker]);
@@ -471,6 +501,7 @@ export function useGameState() {
     setLastMove(null);
     setAiThinkingProgress(null);
     setReplayIndex(null);
+    setSearchStatsHistory([]);
     boardHistory.current = [initialBoard];
     turnHistory.current = ['red'];
     positionHashesRef.current = [computeZobristHash(initialBoard, 'red')];
@@ -509,6 +540,8 @@ export function useGameState() {
     setLastMove(newHistory.length > 0 ? { from: newHistory[newHistory.length - 1].from, to: newHistory[newHistory.length - 1].to } : null);
     setAiThinkingProgress(null);
     setReplayIndex(null);
+    // Remove last AI stats entry (undo removes one AI move)
+    setSearchStatsHistory(prev => prev.slice(0, -1));
 
     boardHistory.current = newBoardHistory;
     turnHistory.current = newTurnHistory;
@@ -672,6 +705,7 @@ export function useGameState() {
     lastMove,
     soundEnabled,
     aiThinkingProgress,
+    searchStatsHistory,
     handleCellClick,
     newGame,
     undoMove,

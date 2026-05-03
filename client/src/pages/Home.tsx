@@ -72,6 +72,7 @@ export default function Home() {
               aiScore={game.aiScore}
               soundEnabled={game.soundEnabled}
               aiThinkingProgress={game.aiThinkingProgress}
+              searchStatsHistory={game.searchStatsHistory}
               onNewGame={game.newGame}
               onUndo={game.undoMove}
               onToggleExplanation={game.toggleAiExplanation}

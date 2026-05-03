@@ -11,7 +11,8 @@ import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Piece, PieceColor, Move, PIECE_CHARS, moveToNotation } from '@/lib/xiangqi';
 import { Difficulty } from '@/lib/ai';
-import { GameStatus, AIThinkingProgress } from '@/hooks/useGameState';
+import { GameStatus, AIThinkingProgress, SearchStats } from '@/hooks/useGameState';
+import SearchStatsPanel from '@/components/SearchStatsPanel';
 import { trpc } from '@/lib/trpc';
 import { RotateCcw, Plus, Undo2, Brain, Loader2, Trophy, Swords, Shield, Volume2, VolumeX, BookOpen, Zap, Save, FolderOpen, Trash2, LogIn, SkipBack, ChevronLeft, ChevronRight, SkipForward, Play } from 'lucide-react';
 import { Streamdown } from 'streamdown';
@@ -40,6 +41,7 @@ interface GameInfoPanelProps {
   onChangeDifficulty: (d: Difficulty) => void;
   serializeGameState: () => string;
   loadGameState: (serialized: string) => boolean;
+  searchStatsHistory: SearchStats[];
   // Replay props
   replayIndex: number | null;
   totalMoves: number;
@@ -79,6 +81,7 @@ export default function GameInfoPanel({
   onChangeDifficulty,
   serializeGameState,
   loadGameState,
+  searchStatsHistory,
   replayIndex,
   totalMoves,
   onReplayGoTo,
@@ -520,6 +523,9 @@ export default function GameInfoPanel({
           </CardContent>
         </Card>
       )}
+
+      {/* Search Statistics */}
+      <SearchStatsPanel stats={searchStatsHistory} isThinking={aiThinking} />
 
       {/* Captured Pieces */}
       <Card>
