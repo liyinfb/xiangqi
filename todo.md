@@ -62,3 +62,6 @@
 - [x] Fix opening book: added AI-as-red first moves, symmetric mirror entries for left/right variations, AI-as-red 2nd/3rd move responses; covers all common openings with addSymmetric helper
 - [x] Bug: opening book timing issue — fixed moveHistoryRef eager update before setTimeout; confirmed working in browser (AI responds instantly from book)
 - [x] Research classic Xiangqi openings and expand opening book to 5-10 moves deep (152 entries covering 10 opening systems with symmetric mirrors, plus resetSearchState for test isolation)
+- [x] Bug: AI (black) places cannon where red chariot can capture it — 送子 blunder (IMG_5506.PNG screenshot)
+  - Fixed: Added hanging piece penalty to evaluation function (40% penalty for undefended attacked pieces)
+  - Fixed: Added safety filter in opening randomization to exclude moves that hang pieces

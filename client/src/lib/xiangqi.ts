@@ -634,7 +634,7 @@ const HORSE_ATK_BR = [-1, -1, 1, 1, 0, 0, 0, 0];
 const HORSE_ATK_BC = [0, 0, 0, 0, -1, 1, -1, 1];
 
 // Fast check if a specific square is attacked by the opponent
-function isSquareAttacked(board: Board, targetRow: number, targetCol: number, byColor: PieceColor): boolean {
+export function isSquareAttacked(board: Board, targetRow: number, targetCol: number, byColor: PieceColor): boolean {
   // Check attacks by chariot/cannon along lines (unrolled directions)
   for (let d = 0; d < 4; d++) {
     const dr = ATTACK_DIRS_DR[d];

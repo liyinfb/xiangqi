@@ -22,6 +22,7 @@ import {
   isCheckmate,
   isInCheck,
   isInCheckFastExport,
+  isSquareAttacked,
   makeMove,
 } from './xiangqi';
 
@@ -231,9 +232,16 @@ function initEvalTables() {
 }
 initEvalTables();
 
+// Hanging piece penalty weights (fraction of piece value to penalize)
+// A hanging piece (attacked but undefended) loses a significant fraction of its value in eval
+const HANGING_PENALTY_FRACTION = 0.4; // 40% of piece value
+const ATTACKED_DEFENDED_PENALTY_FRACTION = 0.1; // 10% penalty for attacked-but-defended pieces
+
 // NegaMax evaluation: returns score from the perspective of `currentTurn`
 function evaluateForSide(board: Board, currentTurn: PieceColor): number {
   let score = 0;
+  const oppColor = currentTurn === 'red' ? 'black' : 'red';
+  
   for (let row = 0; row <= 9; row++) {
     for (let col = 0; col <= 8; col++) {
       const piece = board[row][col];
@@ -247,6 +255,45 @@ function evaluateForSide(board: Board, currentTurn: PieceColor): number {
       else score -= value;
     }
   }
+  
+  // Hanging piece penalty: penalize pieces that are attacked by the opponent
+  // Only check major pieces (chariot, cannon, horse) to keep evaluation fast
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 8; col++) {
+      const piece = board[row][col];
+      if (!piece) continue;
+      // Only check valuable pieces (skip soldiers, advisors, elephants for speed)
+      if (piece.type !== 'chariot' && piece.type !== 'cannon' && piece.type !== 'horse') continue;
+      
+      const pieceVal = EVAL_PIECE_VALUES[piece.type];
+      const attackedBy = piece.color === currentTurn ? oppColor : currentTurn;
+      
+      if (isSquareAttacked(board, row, col, attackedBy)) {
+        // Check if the piece is defended (attacked by its own side)
+        const defendedBy = piece.color;
+        const isDefended = isSquareAttacked(board, row, col, defendedBy);
+        
+        if (!isDefended) {
+          // Hanging piece - severe penalty
+          const penalty = Math.floor(pieceVal * HANGING_PENALTY_FRACTION);
+          if (piece.color === currentTurn) {
+            score -= penalty;
+          } else {
+            score += penalty;
+          }
+        } else {
+          // Attacked but defended - mild penalty (tension)
+          const penalty = Math.floor(pieceVal * ATTACKED_DEFENDED_PENALTY_FRACTION);
+          if (piece.color === currentTurn) {
+            score -= penalty;
+          } else {
+            score += penalty;
+          }
+        }
+      }
+    }
+  }
+  
   return score;
 }
 
@@ -969,10 +1016,29 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       const RANDOMIZE_THRESHOLD = moveCounter <= 3 ? 20 : 10;
 
       const candidateMoves: AIMove[] = [];
+      const oppColor = aiColor === 'red' ? 'black' : 'red';
       rootMoveScores.forEach((score, key) => {
         if (Math.abs(score - bestScore) <= RANDOMIZE_THRESHOLD) {
           const parts = key.split(',');
           const fr = parseInt(parts[0]), fc = parseInt(parts[1]), tr = parseInt(parts[2]), tc = parseInt(parts[3]);
+          
+          // Safety check: don't include moves that hang a piece
+          const movedPiece = board[fr][fc];
+          if (movedPiece && movedPiece.type !== 'soldier') {
+            // Temporarily make the move to check if destination is attacked
+            const tempCaptured = makeMoveInPlace(board, fr, fc, tr, tc);
+            const isHanging = isSquareAttacked(board, tr, tc, oppColor) &&
+                             !isSquareAttacked(board, tr, tc, aiColor);
+            undoMoveInPlace(board, fr, fc, tr, tc, movedPiece, tempCaptured);
+            
+            // Skip moves that hang a valuable piece (net loss > captured value)
+            if (isHanging) {
+              const movedVal = EVAL_PIECE_VALUES[movedPiece.type];
+              const capturedVal = tempCaptured ? EVAL_PIECE_VALUES[tempCaptured.type] : 0;
+              if (movedVal > capturedVal + 100) return; // Skip this candidate
+            }
+          }
+          
           candidateMoves.push({ from: { row: fr, col: fc }, to: { row: tr, col: tc }, score, searchDepth: completedDepth });
         }
       });
