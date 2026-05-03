@@ -494,6 +494,22 @@ function generateScoredMoves(
   return scored;
 }
 
+// ==================== Board Symmetry Detection ====================
+
+/** Check if the board is left-right symmetric (mirror along column 4) */
+function isBoardSymmetric(board: Board): boolean {
+  for (let row = 0; row <= 9; row++) {
+    for (let col = 0; col <= 3; col++) {
+      const left = board[row][col];
+      const right = board[row][8 - col];
+      if (left === null && right === null) continue;
+      if (left === null || right === null) return false;
+      if (left.type !== right.type || left.color !== right.color) return false;
+    }
+  }
+  return true;
+}
+
 // ==================== In-Place Make/Undo ====================
 
 function makeMoveInPlace(board: Board, fromRow: number, fromCol: number, toRow: number, toCol: number): Piece | null {
@@ -938,6 +954,43 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
     }
   }
 
+  // ==================== Mirror/Symmetry Optimization ====================
+  // When the board is left-right symmetric AND there is no position history
+  // that could make mirrored moves non-equivalent (due to repetition detection),
+  // we only search one of each mirror pair at the root, halving root moves.
+  // With position history, mirrored moves may lead to different hashes and
+  // different repetition penalties, so we must search both.
+  const hasHistory = gamePositionHashes.length > 0;
+  const isSymmetric = !hasHistory && isBoardSymmetric(board);
+  let uniqueMoves = allMoves;
+  let mirrorMap: Map<string, string> | null = null; // maps mirror key -> canonical key
+  
+  if (isSymmetric) {
+    mirrorMap = new Map();
+    const seen = new Set<string>();
+    const filtered: typeof allMoves = [];
+    
+    for (const m of allMoves) {
+      const key = `${m.from.row},${m.from.col},${m.to.row},${m.to.col}`;
+      const mc = 8 - m.from.col;
+      const mtc = 8 - m.to.col;
+      const mirrorKey = `${m.from.row},${mc},${m.to.row},${mtc}`;
+      
+      if (key === mirrorKey) {
+        // Self-symmetric move (e.g., center column moves) — always include
+        filtered.push(m);
+        seen.add(key);
+      } else if (!seen.has(mirrorKey)) {
+        // First of the mirror pair — include this one
+        filtered.push(m);
+        seen.add(key);
+        mirrorMap.set(mirrorKey, key); // map the mirror to this canonical
+      }
+      // else: mirror already seen, skip this move
+    }
+    uniqueMoves = filtered;
+  }
+
   // Compute initial hash
   const rootHash = computeZobristHash(board, aiColor);
 
@@ -959,7 +1012,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
   let completedDepth = 0;
   const nextTurn = aiColor === 'red' ? 'black' : 'red';
 
-  // Track root move scores for randomization
+  // Track root move scores
   const rootMoveScores: Map<string, number> = new Map();
 
   // Iterative deepening with timing
@@ -988,7 +1041,7 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
 
       // Sort root moves using previous iteration's best move
       const ttBest = bestMove ? { fromRow: bestMove.from.row, fromCol: bestMove.from.col, toRow: bestMove.to.row, toCol: bestMove.to.col } : null;
-      const scoredRootMoves = generateScoredMoves(board, allMoves, 0, ttBest);
+      const scoredRootMoves = generateScoredMoves(board, uniqueMoves, 0, ttBest);
 
       let currentBest: AIMove | null = null;
       let currentBestScore = -INF;
@@ -1075,6 +1128,16 @@ export function getBestMove(board: Board, aiColor: PieceColor, difficulty: Diffi
       if (!searchAborted && currentBest) {
         bestMove = currentBest;
         completedDepth = depth;
+        
+        // Mirror symmetry: propagate scores to mirror moves
+        if (isSymmetric && mirrorMap) {
+          mirrorMap.forEach((canonicalKey, mirrorKey) => {
+            const canonicalScore = rootMoveScores.get(canonicalKey);
+            if (canonicalScore !== undefined) {
+              rootMoveScores.set(mirrorKey, canonicalScore);
+            }
+          });
+        }
       }
     }
 

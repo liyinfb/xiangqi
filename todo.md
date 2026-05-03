@@ -76,3 +76,8 @@
   - Fixed: Added cannon forward penalty in evaluation for cannons on edge files in no-man's land
   - Verified: 34 tests passing across 7 test suites (tactical, comprehensive, hanging piece, repetition, opening book, opening quality, basic)
 - [x] Unify all difficulty levels to use same AI logic (opening book, no randomization, opening filters), differentiated only by search time: easy < 2s, medium < 5s, hard = 8s
+- [x] Implement mirror/symmetry optimization in search engine to reduce nodes when board is left-right symmetric
+  - Added isBoardSymmetric() detection function
+  - Root-level move deduplication: only search one of each mirror pair
+  - Score propagation to mirror moves after search
+  - Result: search depth increased from 9 to 11 on initial board (same time budget)
