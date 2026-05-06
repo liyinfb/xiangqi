@@ -297,7 +297,7 @@ export default function XiangqiBoard({
     <div className="flex justify-center items-center">
       <svg
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-        className="w-full max-w-[600px] h-auto drop-shadow-xl"
+        className="w-full h-auto drop-shadow-xl max-w-[600px] lg:max-w-full lg:max-h-[calc(100vh-140px)]"
         style={{ background: 'linear-gradient(135deg, #f5e6d3 0%, #ede0d0 100%)' }}
       >
         {/* Board background */}

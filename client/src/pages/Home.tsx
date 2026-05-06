@@ -13,10 +13,10 @@ export default function Home() {
   const displayLastMove = isReplaying ? game.replayLastMove : game.lastMove;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-100 via-amber-50 to-stone-100">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-gradient-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col">
       {/* Header */}
-      <header className="border-b border-stone-200 bg-white/80 backdrop-blur-sm">
-        <div className="container py-4">
+      <header className="border-b border-stone-200 bg-white/80 backdrop-blur-sm flex-shrink-0">
+        <div className="container py-3">
           <div className="flex items-center justify-center gap-3">
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-red-700 to-red-900 flex items-center justify-center">
               <span className="text-white text-sm font-bold">棋</span>
@@ -30,11 +30,11 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="container py-8">
-        <div className="flex flex-col lg:flex-row items-start justify-center gap-8 max-w-6xl mx-auto">
-          {/* Board Section */}
-          <div className="flex-shrink-0 w-full lg:w-auto">
-            <div className={`bg-white rounded-xl shadow-lg p-4 border ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
+      <main className="flex-1 lg:overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:h-full">
+          {/* Board Section - fills left side on large screens */}
+          <div className="flex-1 flex items-center justify-center p-4 lg:p-6">
+            <div className={`bg-white rounded-xl shadow-lg p-4 border w-full max-w-[650px] lg:max-w-none ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
               {isReplaying && (
                 <div className="text-center text-sm text-blue-600 font-medium mb-2">
                   回放模式 · 第 {game.replayIndex} / {game.moveHistory.length} 步
@@ -54,8 +54,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Info Panel */}
-          <div className="w-full lg:w-auto">
+          {/* Info Panel - independently scrollable on large screens */}
+          <div className="w-full lg:w-[360px] xl:w-[400px] flex-shrink-0 lg:h-full lg:overflow-y-auto lg:border-l lg:border-stone-200 lg:bg-white/40 p-4 lg:p-5">
             <GameInfoPanel
               moveHistory={game.moveHistory}
               capturedPieces={game.capturedPieces}
@@ -92,8 +92,8 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-stone-200 bg-white/60 py-4 mt-8">
+      {/* Footer - hidden on large screens to maximize board space */}
+      <footer className="border-t border-stone-200 bg-white/60 py-3 lg:hidden flex-shrink-0">
         <div className="container text-center text-sm text-stone-500">
           {game.playerColor === 'red' ? '您执红棋先行' : '您执黑棋，电脑先行'}，点击棋子查看可走位置
         </div>
