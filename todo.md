@@ -139,3 +139,5 @@
   - Root cause: Xiangqi midgame has ~44 legal moves per position, much wider than chess (~30)
   - Would require NNUE neural network evaluation (like Stockfish) to replace handcrafted eval
   - NNUE reduces effective branching factor by providing more accurate evaluations for pruning
+- [x] Create README.md with UI screenshot, features list, installation instructions
+- [x] Add Docker Compose setup for local development
