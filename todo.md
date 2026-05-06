@@ -141,3 +141,4 @@
   - NNUE reduces effective branching factor by providing more accurate evaluations for pruning
 - [x] Create README.md with UI screenshot, features list, installation instructions
 - [x] Add Docker Compose setup for local development
+- [x] Fix TypeError: Invalid URL crash when VITE_OAUTH_PORTAL_URL is empty (Docker local deployment)
