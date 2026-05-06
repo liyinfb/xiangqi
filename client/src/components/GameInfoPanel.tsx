@@ -198,7 +198,7 @@ export default function GameInfoPanel({
   };
 
   return (
-    <div className="flex flex-col gap-4 w-full lg:max-w-none max-w-sm">
+    <div className="flex flex-col gap-4 w-full">
       {/* Game Status */}
       <Card className={`border-2 ${getStatusColor()}`}>
         <CardContent className="py-4 px-5">

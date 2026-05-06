@@ -143,3 +143,4 @@
 - [x] Add Docker Compose setup for local development
 - [x] Fix TypeError: Invalid URL crash when VITE_OAUTH_PORTAL_URL is empty (Docker local deployment)
 - [x] Large screen layout: board fills left side, right info panel scrolls independently (overflow-y auto)
+- [x] Small screen layout: info panel below board with same width as board

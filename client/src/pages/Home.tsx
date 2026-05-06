@@ -31,10 +31,11 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="flex-1 lg:overflow-hidden">
-        <div className="flex flex-col lg:flex-row lg:h-full">
+        {/* Large screen: side-by-side layout */}
+        <div className="hidden lg:flex lg:flex-row lg:h-full">
           {/* Board Section - fills left side on large screens */}
-          <div className="flex-1 flex items-center justify-center p-4 lg:p-6">
-            <div className={`bg-white rounded-xl shadow-lg p-4 border w-full max-w-[650px] lg:max-w-none ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className={`bg-white rounded-xl shadow-lg p-4 border ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
               {isReplaying && (
                 <div className="text-center text-sm text-blue-600 font-medium mb-2">
                   回放模式 · 第 {game.replayIndex} / {game.moveHistory.length} 步
@@ -55,7 +56,66 @@ export default function Home() {
           </div>
 
           {/* Info Panel - independently scrollable on large screens */}
-          <div className="w-full lg:w-[360px] xl:w-[400px] flex-shrink-0 lg:h-full lg:overflow-y-auto lg:border-l lg:border-stone-200 lg:bg-white/40 p-4 lg:p-5">
+          <div className="w-[360px] xl:w-[400px] flex-shrink-0 h-full overflow-y-auto border-l border-stone-200 bg-white/40 p-5">
+            <GameInfoPanel
+              moveHistory={game.moveHistory}
+              capturedPieces={game.capturedPieces}
+              status={game.status}
+              currentTurn={game.currentTurn}
+              playerColor={game.playerColor}
+              isInCheck={game.isInCheck}
+              difficulty={game.difficulty}
+              aiThinking={game.aiThinking}
+              aiExplanation={game.aiExplanation}
+              aiExplanationEnabled={game.aiExplanationEnabled}
+              aiExplanationLoading={game.aiExplanationLoading}
+              aiSearchDepth={game.aiSearchDepth}
+              aiScore={game.aiScore}
+              soundEnabled={game.soundEnabled}
+              aiThinkingProgress={game.aiThinkingProgress}
+              searchStatsHistory={game.searchStatsHistory}
+              onNewGame={game.newGame}
+              onUndo={game.undoMove}
+              onToggleExplanation={game.toggleAiExplanation}
+              onToggleSound={game.toggleSound}
+              onChangeDifficulty={game.changeDifficulty}
+              serializeGameState={game.serializeGameState}
+              loadGameState={game.loadGameState}
+              replayIndex={game.replayIndex}
+              totalMoves={game.moveHistory.length}
+              onReplayGoTo={game.replayGoTo}
+              onReplayGoFirst={game.replayGoFirst}
+              onReplayGoPrev={game.replayGoPrev}
+              onReplayGoNext={game.replayGoNext}
+              onReplayGoLast={game.replayGoLast}
+            />
+          </div>
+        </div>
+
+        {/* Small screen: stacked layout with same width */}
+        <div className="lg:hidden flex flex-col items-center py-4 px-4">
+          {/* Board */}
+          <div className={`bg-white rounded-xl shadow-lg p-4 border w-full max-w-[600px] ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
+            {isReplaying && (
+              <div className="text-center text-sm text-blue-600 font-medium mb-2">
+                回放模式 · 第 {game.replayIndex} / {game.moveHistory.length} 步
+                <span className="text-xs text-blue-400 ml-2">（点击棋盘返回对弈）</span>
+              </div>
+            )}
+            <XiangqiBoard
+              board={displayBoard}
+              selectedPosition={isReplaying ? null : game.selectedPosition}
+              validMoves={isReplaying ? [] : game.validMoves}
+              lastMove={displayLastMove}
+              onCellClick={game.handleCellClick}
+              currentTurn={game.currentTurn}
+              playerColor={game.playerColor}
+              disabled={!isReplaying && (game.status !== 'playing' || !isPlayerTurn || game.aiThinking)}
+            />
+          </div>
+
+          {/* Info Panel - same max-width as board */}
+          <div className="w-full max-w-[600px] mt-4">
             <GameInfoPanel
               moveHistory={game.moveHistory}
               capturedPieces={game.capturedPieces}
