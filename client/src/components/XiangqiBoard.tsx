@@ -294,10 +294,11 @@ export default function XiangqiBoard({
   };
 
   return (
-    <div className="flex justify-center items-center">
+    <div className="flex justify-center items-center w-full h-full">
       <svg
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-        className="w-full h-auto drop-shadow-xl max-w-[600px] lg:max-w-full lg:max-h-[calc(100vh-140px)]"
+        className="w-full h-full max-w-[600px] lg:max-w-none drop-shadow-xl"
+        preserveAspectRatio="xMidYMid meet"
         style={{ background: 'linear-gradient(135deg, #f5e6d3 0%, #ede0d0 100%)' }}
       >
         {/* Board background */}

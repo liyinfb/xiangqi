@@ -34,24 +34,26 @@ export default function Home() {
         {/* Large screen: side-by-side layout */}
         <div className="hidden lg:flex lg:flex-row lg:h-full">
           {/* Board Section - fills left side on large screens */}
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className={`bg-white rounded-xl shadow-lg p-4 border ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
+          <div className="flex-1 flex items-center justify-center p-4 h-full">
+            <div className={`bg-white rounded-xl shadow-lg p-3 border flex flex-col h-[calc(100vh-80px)] max-h-[calc(100vh-80px)] aspect-[592/656] ${isReplaying ? 'border-blue-300 ring-2 ring-blue-100' : 'border-stone-200'}`}>
               {isReplaying && (
-                <div className="text-center text-sm text-blue-600 font-medium mb-2">
+                <div className="text-center text-sm text-blue-600 font-medium mb-1 flex-shrink-0">
                   回放模式 · 第 {game.replayIndex} / {game.moveHistory.length} 步
                   <span className="text-xs text-blue-400 ml-2">（点击棋盘返回对弈）</span>
                 </div>
               )}
-              <XiangqiBoard
-                board={displayBoard}
-                selectedPosition={isReplaying ? null : game.selectedPosition}
-                validMoves={isReplaying ? [] : game.validMoves}
-                lastMove={displayLastMove}
-                onCellClick={game.handleCellClick}
-                currentTurn={game.currentTurn}
-                playerColor={game.playerColor}
-                disabled={!isReplaying && (game.status !== 'playing' || !isPlayerTurn || game.aiThinking)}
-              />
+              <div className="flex-1 min-h-0">
+                <XiangqiBoard
+                  board={displayBoard}
+                  selectedPosition={isReplaying ? null : game.selectedPosition}
+                  validMoves={isReplaying ? [] : game.validMoves}
+                  lastMove={displayLastMove}
+                  onCellClick={game.handleCellClick}
+                  currentTurn={game.currentTurn}
+                  playerColor={game.playerColor}
+                  disabled={!isReplaying && (game.status !== 'playing' || !isPlayerTurn || game.aiThinking)}
+                />
+              </div>
             </div>
           </div>
 
